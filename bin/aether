@@ -1,0 +1,111 @@
+#!/usr/bin/env bash
+# Aether CLI launcher — detects Termux vs regular Linux and sets env accordingly.
+# Handles proot, Termux $PREFIX, NO_COLOR for non-TTY, and graceful fallback.
+
+set -e
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+ROOT_DIR="$(dirname "$SCRIPT_DIR")"
+DIST_FILE="$ROOT_DIR/dist/cli.js"
+
+# ── Detect Termux ──────────────────────────────────────────────────────────
+
+is_termux() {
+  [ -n "$TERMUX_VERSION" ] || [ -d /data/data/com.termux ]
+}
+
+# ── Detect proot (common in Termux setups) ─────────────────────────────────
+
+is_proot() {
+  # Check proot-specific env vars
+  [ -n "$PROOT_TMP_DIR" ] && return 0
+  [ -n "$PROOT_RAW_BIND" ] && return 0
+
+  # Check for /proc/ish (iSH compatibility)
+  [ -e /proc/ish ] && return 0
+
+  # When running under proot, /proc/1/root differs from /
+  if [ -L /proc/1/root ]; then
+    local root_target
+    root_target="$(readlink /proc/1/root 2>/dev/null || true)"
+    if [ -n "$root_target" ] && [ "$root_target" != "/" ]; then
+      return 0
+    fi
+  fi
+
+  return 1
+}
+
+# ── Set NO_COLOR if stdout is not a TTY ────────────────────────────────────
+
+if [ ! -t 1 ]; then
+  export NO_COLOR=1
+fi
+
+# ── Handle $PREFIX for Termux ──────────────────────────────────────────────
+
+if is_termux; then
+  export AETHER_TERMUX=1
+
+  # Ensure $PREFIX is set (Termux normally sets this)
+  if [ -z "$PREFIX" ]; then
+    export PREFIX="/data/data/com.termux/files/usr"
+  fi
+
+  # Common Termux paths
+  export PATH="$PREFIX/bin:$PREFIX/var/lib/aether/bin:$PATH"
+
+  # Use Node in Termux since Bun may not be available natively
+  if [ -x "$PREFIX/bin/node" ]; then
+    NODE="$PREFIX/bin/node"
+  elif [ -x /data/data/com.termux/files/usr/bin/node ]; then
+    NODE="/data/data/com.termux/files/usr/bin/node"
+  fi
+fi
+
+# ── Proot detection env ────────────────────────────────────────────────────
+
+if is_proot; then
+  export AETHER_PROOT=1
+fi
+
+# ── Resolve runtime: prefer Bun, fall back to Node ─────────────────────────
+
+if [ -z "$NODE" ]; then
+  if command -v bun &>/dev/null; then
+    exec bun run "$DIST_FILE" "$@"
+  elif command -v node &>/dev/null; then
+    NODE="node"
+  fi
+fi
+
+if [ -n "$NODE" ]; then
+  exec "$NODE" "$DIST_FILE" "$@"
+fi
+
+# ── Graceful fallback ──────────────────────────────────────────────────────
+
+cat >&2 <<'EOF'
+╔══════════════════════════════════════════════════════════════╗
+║  Error: Neither Bun nor Node.js found.                      ║
+║                                                              ║
+║  Install one of:                                             ║
+║                                                              ║
+║  Termux:                                                     ║
+║    pkg install nodejs                                        ║
+║    curl -fsSL https://bun.sh/install | bash                  ║
+║                                                              ║
+║  Linux:                                                      ║
+║    curl -fsSL https://deb.nodesource.com/setup_22.x | bash   ║
+║    apt-get install -y nodejs                                 ║
+║    curl -fsSL https://bun.sh/install | bash                  ║
+║                                                              ║
+║  macOS:                                                      ║
+║    brew install node                                         ║
+║    curl -fsSL https://bun.sh/install | bash                  ║
+║                                                              ║
+║  Or use the one-command installer:                           ║
+║    curl -fsSL https://aether-cli.dev/install.sh | bash       ║
+╚══════════════════════════════════════════════════════════════╝
+EOF
+exit 1

@@ -1,0 +1,51 @@
+{
+  "name": "aether-cli",
+  "version": "0.1.0",
+  "description": "A lightweight, multi-model CLI AI coding agent for Termux on Android. Generate, review, and test code through any LLM provider — provider-agnostic, offline-ready, all from your terminal.",
+  "type": "module",
+  "bin": {
+    "aether": "./bin/aether"
+  },
+  "scripts": {
+    "build": "bun build src/cli.ts --outdir dist --target node --format esm",
+    "start": "bun run dist/cli.js",
+    "dev": "bun run src/cli.ts",
+    "typecheck": "bun run tsc --noEmit"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.39.0",
+    "@google/generative-ai": "^0.21.0",
+    "chalk": "^5.4.1",
+    "commander": "^13.1.0",
+    "openai": "^5.2.0",
+    "ora": "^8.2.0"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.2.4"
+  },
+  "license": "MIT",
+  "keywords": [
+    "aether",
+    "cli",
+    "ai",
+    "llm",
+    "coding-agent",
+    "termux",
+    "android",
+    "code-generation",
+    "code-review",
+    "test-generation",
+    "openai",
+    "anthropic",
+    "gemini",
+    "deepseek",
+    "ollama",
+    "developer-tools",
+    "bun"
+  ],
+  "author": "Aether CLI Contributors",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/aether-cli/aether-cli"
+  }
+}
