@@ -21,7 +21,7 @@ curl -fsSL https://raw.githubusercontent.com/aether-cli/aether-cli/main/install.
 <summary>Or install manually</summary>
 
 ```bash
-git clone https://github.com/aether-cli/aether-cli.git
+git clone https://github.com/Patel-web-devloper/aether-cli.git
 cd aether-cli
 bun install
 bun run build
