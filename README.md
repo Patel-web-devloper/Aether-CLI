@@ -14,7 +14,7 @@ Generate, review, and test code through any LLM provider. Provider-agnostic. Off
 ## Quick Install
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/aether-cli/aether-cli/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/Patel-web-devloper/aether-cli/main/install.sh | bash
 ```
 
 <details>
