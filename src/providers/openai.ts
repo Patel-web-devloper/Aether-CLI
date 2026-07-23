@@ -2,8 +2,10 @@
  * OpenAI provider implementation.
  *
  * Uses the official `openai` npm package.
+ * Supports ALL OpenAI-compatible endpoints via configurable baseUrl.
  * Slug: "openai"
  * Env var: OPENAI_API_KEY
+ * Optional env: OPENAI_BASE_URL, OPENAI_ORG_ID
  */
 
 import OpenAI from "openai";
@@ -18,11 +20,23 @@ import type {
 
 const OPENAI_MODELS = ["gpt-4o", "gpt-4o-mini", "gpt-4.1", "o4-mini"];
 
+export interface OpenAIOptions {
+  baseUrl?: string;
+  headers?: Record<string, string>;
+  organization?: string;
+  timeout?: number;
+}
+
 export class OpenAIProvider implements LLMProvider {
   readonly name = "OpenAI";
   readonly slug = "openai";
 
   private client: OpenAI | null = null;
+  private options: OpenAIOptions;
+
+  constructor(options?: OpenAIOptions) {
+    this.options = options ?? {};
+  }
 
   async initialize(): Promise<void> {
     const apiKey = process.env.OPENAI_API_KEY;
@@ -32,7 +46,22 @@ export class OpenAIProvider implements LLMProvider {
           "Set it via: export OPENAI_API_KEY=sk-...",
       );
     }
-    this.client = new OpenAI({ apiKey });
+
+    const baseURL = this.options.baseUrl ?? process.env.OPENAI_BASE_URL;
+    const organization = this.options.organization ?? process.env.OPENAI_ORG_ID;
+    const defaultHeaders = this.options.headers;
+    const timeout = this.options.timeout ?? (process.env.OPENAI_TIMEOUT ? parseInt(process.env.OPENAI_TIMEOUT, 10) : undefined);
+
+    const clientOpts: ConstructorParameters<typeof OpenAI>[0] = {
+      apiKey,
+    };
+
+    if (baseURL) clientOpts.baseURL = baseURL;
+    if (organization) clientOpts.organization = organization;
+    if (defaultHeaders) clientOpts.defaultHeaders = defaultHeaders;
+    if (timeout) clientOpts.timeout = timeout;
+
+    this.client = new OpenAI(clientOpts);
   }
 
   private ensureClient(): OpenAI {
