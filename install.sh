@@ -39,7 +39,7 @@ set -euo pipefail
 
 # ── Installer metadata ───────────────────────────────────────────────────────
 readonly AETHER_VERSION="0.1.0"
-readonly DEFAULT_REPO_URL="https://github.com/aether-cli/aether-cli.git"
+readonly DEFAULT_REPO_URL="https://github.com/Patel-web-devloper/aether-cli.git"
 readonly DEFAULT_BRANCH="main"
 readonly BACKUP_KEEP=3
 readonly START_TIME="$(date +%s)"
