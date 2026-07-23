@@ -1,111 +1,365 @@
 #!/usr/bin/env bash
-# Aether CLI launcher — detects Termux vs regular Linux and sets env accordingly.
-# Handles proot, Termux $PREFIX, NO_COLOR for non-TTY, and graceful fallback.
+# ╔══════════════════════════════════════════════════════════════════════════════╗
+# ║  Aether CLI — Launcher                                                    ║
+# ║  Multi-model AI coding agent for Termux, Linux, macOS, and WSL.           ║
+# ║  Intelligently resolves runtime, handles symlinks, and self-builds.       ║
+# ╚══════════════════════════════════════════════════════════════════════════════╝
+#
+# Environment variables:
+#   AETHER_DEBUG=1      Debug output to stderr
+#   AETHER_VERBOSE=1    Verbose output
+#   AETHER_NO_COLOR=1   Disable ANSI colors
+#   NO_COLOR=1          (standard) Disable ANSI colors
+#   AETHER_FORCE_NODE=1 Force Node.js even if Bun is available
+#   AETHER_FORCE_BUN=1  Force Bun even on Termux
 
 set -e
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# ── Resolve symlinks to find the real script location ────────────────────────
+
+resolve_symlink() {
+  local target="$1"
+  # Try greadlink (macOS coreutils) first, then realpath, then readlink -f, then readlink
+  if command -v greadlink >/dev/null 2>&1; then
+    greadlink -f "$target"
+  elif command -v realpath >/dev/null 2>&1; then
+    realpath "$target"
+  elif readlink -f "$target" 2>/dev/null; then
+    readlink -f "$target"
+  else
+    # Manual symlink resolution fallback
+    local dir
+    dir="$(cd "$(dirname "$target")" 2>/dev/null && pwd -P)"
+    local base
+    base="$(basename "$target")"
+    echo "$dir/$base"
+  fi
+}
+
+SCRIPT_PATH="$(resolve_symlink "$0")"
+SCRIPT_DIR="$(dirname "$SCRIPT_PATH")"
 ROOT_DIR="$(dirname "$SCRIPT_DIR")"
 DIST_FILE="$ROOT_DIR/dist/cli.js"
 
-# ── Detect Termux ──────────────────────────────────────────────────────────
+# ── Debug / verbose output ───────────────────────────────────────────────────
 
-is_termux() {
-  [ -n "$TERMUX_VERSION" ] || [ -d /data/data/com.termux ]
+debug() {
+  if [ "${AETHER_DEBUG:-0}" = "1" ] || [ "${AETHER_VERBOSE:-0}" = "1" ]; then
+    echo "[aether:debug] $*" >&2
+  fi
 }
 
-# ── Detect proot (common in Termux setups) ─────────────────────────────────
+debug "SCRIPT_PATH=$SCRIPT_PATH"
+debug "SCRIPT_DIR=$SCRIPT_DIR"
+debug "ROOT_DIR=$ROOT_DIR"
+debug "DIST_FILE=$DIST_FILE"
 
-is_proot() {
+# ── Platform detection ───────────────────────────────────────────────────────
+
+detect_platform() {
+  local os
+  os="$(uname -s)"
+  local arch
+  arch="$(uname -m)"
+
+  # Termux
+  if [ -n "${TERMUX_VERSION:-}" ] || [ -d /data/data/com.termux ]; then
+    echo "termux"
+    return
+  fi
+
+  # PRoot (common in Android/Termux setups)
   # Check proot-specific env vars
-  [ -n "$PROOT_TMP_DIR" ] && return 0
-  [ -n "$PROOT_RAW_BIND" ] && return 0
-
+  if [ -n "${PROOT_TMP_DIR:-}" ] || [ -n "${PROOT_RAW_BIND:-}" ]; then
+    echo "proot"
+    return
+  fi
   # Check for /proc/ish (iSH compatibility)
-  [ -e /proc/ish ] && return 0
-
+  if [ -e /proc/ish ] 2>/dev/null; then
+    echo "proot"
+    return
+  fi
   # When running under proot, /proc/1/root differs from /
-  if [ -L /proc/1/root ]; then
+  if [ -L /proc/1/root ] 2>/dev/null; then
     local root_target
     root_target="$(readlink /proc/1/root 2>/dev/null || true)"
     if [ -n "$root_target" ] && [ "$root_target" != "/" ]; then
+      echo "proot"
+      return
+    fi
+  fi
+
+  # WSL
+  if [ -f /proc/sys/fs/binfmt_misc/WSLInterop ] 2>/dev/null; then
+    echo "wsl"
+    return
+  fi
+  if grep -qi microsoft /proc/version 2>/dev/null; then
+    echo "wsl"
+    return
+  fi
+
+  # Standard OS
+  case "$os" in
+    Darwin) echo "macos" ;;
+    Linux)
+      # Try to identify the distro
+      if [ -f /etc/os-release ]; then
+        local id
+        id="$(. /etc/os-release && echo "${ID:-}" | tr '[:upper:]' '[:lower:]')"
+        case "$id" in
+          ubuntu|debian|kali|arch|fedora|alpine|centos|rhel|opensuse*|manjaro|pop|mint|elementary|zorin|parrot|tails) echo "$id" ;;
+          *) echo "linux" ;;
+        esac
+      elif [ -f /etc/alpine-release ]; then
+        echo "alpine"
+      elif [ -f /etc/arch-release ]; then
+        echo "arch"
+      else
+        echo "linux"
+      fi
+      ;;
+    *) echo "$os" ;;
+  esac
+}
+
+PLATFORM="$(detect_platform)"
+debug "PLATFORM=$PLATFORM"
+
+# ── Helper: is this a Termux-like environment? ───────────────────────────────
+
+is_termux_env() {
+  case "$PLATFORM" in
+    termux|proot) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+is_proot_env() {
+  [ "$PLATFORM" = "proot" ]
+}
+
+# ── Set NO_COLOR if stdout is not a TTY ──────────────────────────────────────
+
+if [ ! -t 1 ] || [ "${AETHER_NO_COLOR:-0}" = "1" ]; then
+  export NO_COLOR=1
+fi
+
+# ── Set env flags for downstream use ─────────────────────────────────────────
+
+if is_termux_env; then
+  export AETHER_TERMUX=1
+fi
+
+if is_proot_env; then
+  export AETHER_PROOT=1
+fi
+
+# ── Handle $PREFIX for Termux ────────────────────────────────────────────────
+
+if is_termux_env; then
+  # Ensure $PREFIX is set (Termux normally sets this)
+  if [ -z "${PREFIX:-}" ]; then
+    export PREFIX="/data/data/com.termux/files/usr"
+  fi
+  # Common Termux paths
+  export PATH="$PREFIX/bin:$PREFIX/var/lib/aether/bin:$PATH"
+fi
+
+# ── Build fallback chain (if dist/cli.js is missing) ─────────────────────────
+
+build_dist() {
+  local build_backend="none"
+
+  debug "dist/cli.js not found, attempting build..."
+
+  # 1. Try bun run build
+  if command -v bun >/dev/null 2>&1 && [ -f "$ROOT_DIR/package.json" ]; then
+    echo "[aether] Building with Bun..." >&2
+    if (cd "$ROOT_DIR" && bun run build 2>&1) >&2; then
+      if [ -f "$DIST_FILE" ]; then
+        build_backend="bun"
+        echo "[aether] Build succeeded (Bun bundler)" >&2
+        echo "$build_backend"
+        return 0
+      fi
+    fi
+    echo "[aether] Bun build failed, trying next..." >&2
+  fi
+
+  # 2. Try npm run build
+  if command -v npm >/dev/null 2>&1 && [ -f "$ROOT_DIR/package.json" ]; then
+    echo "[aether] Building with npm..." >&2
+    if (cd "$ROOT_DIR" && npm run build 2>&1) >&2; then
+      if [ -f "$DIST_FILE" ]; then
+        build_backend="npm"
+        echo "[aether] Build succeeded (npm)" >&2
+        echo "$build_backend"
+        return 0
+      fi
+    fi
+    echo "[aether] npm build failed, trying next..." >&2
+  fi
+
+  # 3. Try npx esbuild directly
+  if command -v npx >/dev/null 2>&1; then
+    echo "[aether] Building with esbuild (npx)..." >&2
+    if (cd "$ROOT_DIR" && npx --yes esbuild src/cli.ts --bundle --platform=node --format=esm --outfile=dist/cli.js 2>&1) >&2; then
+      if [ -f "$DIST_FILE" ]; then
+        build_backend="esbuild"
+        echo "[aether] Build succeeded (esbuild/npx)" >&2
+        echo "$build_backend"
+        return 0
+      fi
+    fi
+    echo "[aether] esbuild failed, trying next..." >&2
+  fi
+
+  # 4. Try npx tsc
+  if command -v npx >/dev/null 2>&1 && [ -f "$ROOT_DIR/tsconfig.json" ]; then
+    echo "[aether] Building with TypeScript (npx tsc)..." >&2
+    if (cd "$ROOT_DIR" && npx --yes tsc --outDir dist 2>&1) >&2; then
+      # tsc outputs to dist/ but may use a different structure; check for the entrypoint
+      if [ -f "$ROOT_DIR/dist/cli.js" ]; then
+        build_backend="tsc"
+        echo "[aether] Build succeeded (tsc/npx)" >&2
+        echo "$build_backend"
+        return 0
+      fi
+    fi
+    echo "[aether] tsc failed, trying next..." >&2
+  fi
+
+  # 5. Check if a prebuilt dist exists somewhere else
+  if [ -f "$ROOT_DIR/dist/cli.js" ]; then
+    build_backend="prebuilt"
+    echo "[aether] Using prebuilt dist" >&2
+    echo "$build_backend"
+    return 0
+  fi
+
+  echo "[aether] All build backends failed" >&2
+  return 1
+}
+
+if [ ! -f "$DIST_FILE" ]; then
+  if ! build_dist >/dev/null 2>&1; then
+    cat >&2 <<'EOF'
+╔══════════════════════════════════════════════════════════════════╗
+║  Error: dist/cli.js not found and all build backends failed.    ║
+║                                                                  ║
+║  Please build manually:                                          ║
+║    cd ~/.aether-cli && bun run build                             ║
+║                                                                  ║
+║  Or reinstall:                                                   ║
+║    curl -fsSL https://aether-cli.dev/install.sh | bash           ║
+╚══════════════════════════════════════════════════════════════════╝
+EOF
+    exit 1
+  fi
+fi
+
+# ── Resolve runtime ──────────────────────────────────────────────────────────
+
+# Allow explicit overrides
+if [ "${AETHER_FORCE_NODE:-0}" = "1" ]; then
+  NODE_RUNTIME="force"
+elif [ "${AETHER_FORCE_BUN:-0}" = "1" ]; then
+  NODE_RUNTIME=""
+else
+  NODE_RUNTIME=""
+fi
+
+resolve_runtime() {
+  local arch
+  arch="$(uname -m)"
+
+  # ── Termux / PRoot / Android: prefer Node, Bun only if explicitly compatible ──
+  if is_termux_env; then
+    # Try Node first (Termux-path aware)
+    if [ -x "${PREFIX:-/data/data/com.termux/files/usr}/bin/node" ]; then
+      echo "node:${PREFIX:-/data/data/com.termux/files/usr}/bin/node"
+      return 0
+    elif command -v node >/dev/null 2>&1; then
+      echo "node:$(command -v node)"
       return 0
     fi
+
+    # Bun only if aarch64/armv8 AND bun --version succeeds
+    if [ "$arch" = "aarch64" ] || [ "$arch" = "armv8" ] || [ "$arch" = "arm64" ]; then
+      if command -v bun >/dev/null 2>&1 && bun --version >/dev/null 2>&1; then
+        echo "bun:$(command -v bun)"
+        return 0
+      fi
+    fi
+
+    return 1
+  fi
+
+  # ── Linux / macOS / WSL: prefer Bun, fall back to Node ──
+  if command -v bun >/dev/null 2>&1; then
+    echo "bun:$(command -v bun)"
+    return 0
+  fi
+
+  if command -v node >/dev/null 2>&1; then
+    echo "node:$(command -v node)"
+    return 0
   fi
 
   return 1
 }
 
-# ── Set NO_COLOR if stdout is not a TTY ────────────────────────────────────
+# Run resolve
+RUNTIME_INFO="$(resolve_runtime || true)"
+debug "RUNTIME_INFO=$RUNTIME_INFO"
 
-if [ ! -t 1 ]; then
-  export NO_COLOR=1
-fi
-
-# ── Handle $PREFIX for Termux ──────────────────────────────────────────────
-
-if is_termux; then
-  export AETHER_TERMUX=1
-
-  # Ensure $PREFIX is set (Termux normally sets this)
-  if [ -z "$PREFIX" ]; then
-    export PREFIX="/data/data/com.termux/files/usr"
-  fi
-
-  # Common Termux paths
-  export PATH="$PREFIX/bin:$PREFIX/var/lib/aether/bin:$PATH"
-
-  # Use Node in Termux since Bun may not be available natively
-  if [ -x "$PREFIX/bin/node" ]; then
-    NODE="$PREFIX/bin/node"
-  elif [ -x /data/data/com.termux/files/usr/bin/node ]; then
-    NODE="/data/data/com.termux/files/usr/bin/node"
-  fi
-fi
-
-# ── Proot detection env ────────────────────────────────────────────────────
-
-if is_proot; then
-  export AETHER_PROOT=1
-fi
-
-# ── Resolve runtime: prefer Bun, fall back to Node ─────────────────────────
-
-if [ -z "$NODE" ]; then
-  if command -v bun &>/dev/null; then
-    exec bun run "$DIST_FILE" "$@"
-  elif command -v node &>/dev/null; then
-    NODE="node"
-  fi
-fi
-
-if [ -n "$NODE" ]; then
-  exec "$NODE" "$DIST_FILE" "$@"
-fi
-
-# ── Graceful fallback ──────────────────────────────────────────────────────
-
-cat >&2 <<'EOF'
-╔══════════════════════════════════════════════════════════════╗
-║  Error: Neither Bun nor Node.js found.                      ║
-║                                                              ║
-║  Install one of:                                             ║
-║                                                              ║
-║  Termux:                                                     ║
-║    pkg install nodejs                                        ║
-║    curl -fsSL https://bun.sh/install | bash                  ║
-║                                                              ║
-║  Linux:                                                      ║
-║    curl -fsSL https://deb.nodesource.com/setup_22.x | bash   ║
-║    apt-get install -y nodejs                                 ║
-║    curl -fsSL https://bun.sh/install | bash                  ║
-║                                                              ║
-║  macOS:                                                      ║
-║    brew install node                                         ║
-║    curl -fsSL https://bun.sh/install | bash                  ║
-║                                                              ║
-║  Or use the one-command installer:                           ║
-║    curl -fsSL https://aether-cli.dev/install.sh | bash       ║
-╚══════════════════════════════════════════════════════════════╝
+if [ -z "$RUNTIME_INFO" ]; then
+  cat >&2 <<'EOF'
+╔══════════════════════════════════════════════════════════════════╗
+║  Error: Neither Bun nor Node.js found.                          ║
+║                                                                  ║
+║  Install one of:                                                 ║
+║                                                                  ║
+║  Termux:                                                         ║
+║    pkg install nodejs                                            ║
+║    curl -fsSL https://bun.sh/install | bash                      ║
+║                                                                  ║
+║  Linux:                                                          ║
+║    curl -fsSL https://deb.nodesource.com/setup_22.x | bash       ║
+║    apt-get install -y nodejs                                     ║
+║    curl -fsSL https://bun.sh/install | bash                      ║
+║                                                                  ║
+║  macOS:                                                          ║
+║    brew install node                                             ║
+║    curl -fsSL https://bun.sh/install | bash                      ║
+║                                                                  ║
+║  Or use the one-command installer:                               ║
+║    curl -fsSL https://aether-cli.dev/install.sh | bash           ║
+╚══════════════════════════════════════════════════════════════════╝
 EOF
-exit 1
+  exit 1
+fi
+
+RUNTIME="${RUNTIME_INFO%%:*}"
+RUNTIME_PATH="${RUNTIME_INFO#*:}"
+debug "RUNTIME=$RUNTIME  RUNTIME_PATH=$RUNTIME_PATH"
+
+# ── Execute ──────────────────────────────────────────────────────────────────
+
+# If Bun, run via bun run for proper module resolution
+if [ "$RUNTIME" = "bun" ]; then
+  debug "Running: bun run $DIST_FILE $*"
+  exec bun run "$DIST_FILE" "$@"
+  # If bun run fails, try Node fallback
+  EXIT_CODE=$?
+  if command -v node >/dev/null 2>&1; then
+    debug "bun run failed (exit $EXIT_CODE), falling back to Node"
+    exec node "$DIST_FILE" "$@"
+  fi
+  exit $EXIT_CODE
+fi
+
+# Node path
+debug "Running: $RUNTIME_PATH $DIST_FILE $*"
+exec "$RUNTIME_PATH" "$DIST_FILE" "$@"
