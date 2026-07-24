@@ -33,6 +33,14 @@ Aether CLI follows a layered architecture: providers abstract LLM backends, agen
     │  │  │ Google Gemini    │  │  │
     │  │  │ DeepSeek         │  │  │
     │  │  │ Ollama (local)   │  │  │
+    │  │  │ NVIDIA NIM       │  │  │
+    │  │  │ OpenRouter       │  │  │
+    │  │  │ Groq             │  │  │
+    │  │  │ Together AI      │  │  │
+    │  │  │ LM Studio        │  │  │
+    │  │  │ LocalAI          │  │  │
+    │  │  │ vLLM             │  │  │
+    │  │  │ Custom OpenAI    │  │  │
     │  │  └─────────────────┘  │  │
     │  └───────────────────────┘  │
     └────────┬────────────────────┘
@@ -227,6 +235,45 @@ saveConfig(config): void
 
 ---
 
+## Diagnostic & Management Commands
+
+Aether CLI includes a suite of diagnostic and management commands for production use:
+
+### `aether doctor`
+
+Runs 13+ system health checks:
+- **Runtime**: Node.js/Bun version
+- **PATH**: Aether in PATH, bin dir writable
+- **Git**: Installed and version
+- **Node.js**: Installed and version
+- **Bun**: Installed and version
+- **Config**: config.json exists and valid
+- **API Keys**: Environment variables set for each provider
+- **Provider Init**: Connectivity check for configured providers
+- **Internet**: github.com reachability
+- **Permissions**: Config/cache/data dirs writable
+- **Updates**: Check GitHub releases for newer versions
+- **Install Integrity**: dist/cli.js and bin/aether present
+- **Environment**: Platform, Termux status, memory
+
+### `aether update`
+
+Checks GitHub releases and downloads the latest install script. Supports `--check` (dry run) and `--force` (reinstall same version).
+
+### `aether repair`
+
+Fixes common issues: rebuilds dist if missing, reinstalls node_modules, fixes broken symlinks, repairs config file.
+
+### `aether uninstall`
+
+Removes Aether CLI with `--keep-config` option and `--dry-run` preview.
+
+### `aether self-test`
+
+Runs the full test suite. Supports `--suite <name>` to run individual suites: `generate`, `review`, `test`, `context`, `termux`.
+
+---
+
 ## File Structure Reference
 
 ```
@@ -237,6 +284,8 @@ aether-cli/
 │   └── cli.js               # Bundled output (241 modules, ~1.26 MB)
 ├── docs/
 │   ├── architecture.md      # This file
+│   ├── providers.md         # Provider reference and configuration
+│   ├── troubleshooting.md   # Common issues and solutions
 │   └── examples/            # Example workflows
 ├── src/
 │   ├── cli.ts               # Main entry — commander.js, provider registration
@@ -250,7 +299,12 @@ aether-cli/
 │   │   ├── generate.ts      # Generate command → GeneratorAgent
 │   │   ├── review.ts        # Review command → ReviewerAgent
 │   │   ├── setup.ts         # Interactive setup wizard
-│   │   └── test.ts          # Test command → TesterAgent
+│   │   ├── test.ts          # Test command → TesterAgent
+│   │   ├── doctor.ts        # System health diagnostics (13+ checks)
+│   │   ├── update.ts        # Check for and install newer versions
+│   │   ├── repair.ts        # Fix broken installs (rebuild, symlinks)
+│   │   ├── uninstall.ts     # Remove Aether CLI cleanly
+│   │   └── selftest.ts      # Run the Aether CLI test suite
 │   ├── context/
 │   │   ├── types.ts         # FileIndex, ContextChunk, HistorySession, etc.
 │   │   ├── indexer.ts       # Project file indexer
@@ -265,7 +319,15 @@ aether-cli/
 │   │   ├── anthropic.ts     # Anthropic Claude (Sonnet, Opus, etc.)
 │   │   ├── google.ts        # Google Gemini (Flash, Pro, etc.)
 │   │   ├── deepseek.ts      # DeepSeek (V3, R1, etc.)
-│   │   └── ollama.ts        # Ollama local models
+│   │   ├── ollama.ts        # Ollama local models
+│   │   ├── nvidia.ts        # NVIDIA NIM (Nemotron, Llama, etc.)
+│   │   ├── openrouter.ts    # OpenRouter (multi-model gateway)
+│   │   ├── groq.ts          # Groq (fast inference, LPU-accelerated)
+│   │   ├── together.ts      # Together AI (open-source models)
+│   │   ├── lmstudio.ts      # LM Studio local OpenAI-compatible
+│   │   ├── localai.ts       # LocalAI local OpenAI-compatible
+│   │   ├── vllm.ts          # vLLM local OpenAI-compatible
+│   │   └── custom.ts        # Custom OpenAI-compatible endpoint
 │   ├── utils/
 │   │   ├── scanner.ts       # Project structure scanner
 │   │   ├── writer.ts        # Safe file writer with diff previews
@@ -279,7 +341,8 @@ aether-cli/
 │       ├── generate.test.ts # Generator pipeline tests (8)
 │       ├── review.test.ts   # Reviewer pipeline tests (9)
 │       ├── test.test.ts     # Tester pipeline tests (10)
-│       └── termux.test.ts   # Termux + config tests (17)
+│       ├── termux.test.ts   # Termux + config tests (17)
+│       └── installer.test.ts # Installer + CLI tests (15)
 ├── install.sh               # One-command installer (curl | bash)
 ├── package.json
 ├── tsconfig.json

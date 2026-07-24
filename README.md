@@ -54,7 +54,7 @@ aether review ./src --severity warning --json
 
 | | |
 |---|---|
-| **🔌 Provider-agnostic** | Swap between OpenAI, Anthropic, Google Gemini, DeepSeek, and local Ollama models with a single flag. No vendor lock-in. |
+| **🔌 Provider-agnostic** | Swap between OpenAI, Anthropic, Google Gemini, DeepSeek, NVIDIA, OpenRouter, Groq, Together AI, and local models (Ollama, LM Studio, LocalAI, vLLM) with a single flag. No vendor lock-in. |
 | **📁 Large context** | Smart file indexing, AST-aware chunking, and context budgeting handle repositories of any size — up to 128K token context windows. |
 | **📱 Termux-optimized** | Detects Termux/Android automatically. Low-memory mode (< 2 GB RAM). Proot-aware. Config paths respect Termux conventions. |
 | **🧪 Full test pipeline** | Generates, runs, and auto-fixes test suites. Detects your test runner (vitest, jest, bun, mocha, node-test). |
@@ -283,6 +283,88 @@ Displays runtime details, memory status, and API key configuration status.
 
 ---
 
+### `aether doctor`
+
+Diagnose Aether CLI health and configuration. Runs 13+ checks:
+
+```bash
+# Full diagnostic
+aether doctor
+
+# Machine-readable JSON output
+aether doctor --json
+
+# Auto-fix common issues
+aether doctor --fix
+```
+
+Checks: Runtime, PATH, Git, Node.js, Bun, Config, API Keys, Provider Connectivity, Internet, Permissions, Updates, Install Integrity, Environment.
+
+---
+
+### `aether update`
+
+Check for and install newer versions:
+
+```bash
+# Check for updates
+aether update --check
+
+# Install latest version
+aether update
+
+# Reinstall same version
+aether update --force
+```
+
+---
+
+### `aether repair`
+
+Fix common issues with your Aether CLI installation:
+
+```bash
+aether repair
+```
+
+Fixes: rebuilds dist if missing, reinstalls node_modules, fixes broken symlinks, repairs config file.
+
+---
+
+### `aether uninstall`
+
+Remove Aether CLI from your system:
+
+```bash
+# Preview what would be removed
+aether uninstall --dry-run
+
+# Remove but keep config
+aether uninstall --keep-config
+
+# Full uninstall
+aether uninstall
+```
+
+---
+
+### `aether self-test`
+
+Run the Aether CLI test suite:
+
+```bash
+# Run all tests
+aether self-test
+
+# Run a specific suite
+aether self-test --suite generate
+aether self-test --suite context
+```
+
+Available suites: `generate`, `review`, `test`, `context`, `termux`.
+
+---
+
 ## Supported Providers
 
 | Provider | Slug | API Key Env Var | Local? | Features |
@@ -292,6 +374,14 @@ Displays runtime details, memory status, and API key configuration status.
 | **Google Gemini** | `google` | `GEMINI_API_KEY` | No | Streaming, Vision, Tool calls, JSON mode |
 | **DeepSeek** | `deepseek` | `DEEPSEEK_API_KEY` | No | Streaming, Tool calls, JSON mode |
 | **Ollama** | `ollama` | `OLLAMA_BASE_URL` (optional) | ✅ Yes | Streaming, JSON mode, Free |
+| **NVIDIA NIM** | `nvidia` | `NVIDIA_API_KEY` | No | Streaming, Tool calls, JSON mode |
+| **OpenRouter** | `openrouter` | `OPENROUTER_API_KEY` | No | Streaming, Tool calls, JSON mode, Multilingual |
+| **Groq** | `groq` | `GROQ_API_KEY` | No | Streaming, Tool calls, JSON mode |
+| **Together AI** | `together` | `TOGETHER_API_KEY` | No | Streaming, Tool calls, JSON mode |
+| **LM Studio** | `lmstudio` | — | ✅ Yes | Streaming, JSON mode, Free |
+| **LocalAI** | `localai` | `LOCALAI_API_KEY` (optional) | ✅ Yes | Streaming, JSON mode, Free |
+| **vLLM** | `vllm` | — | ✅ Yes | Streaming, JSON mode, Free |
+| **Custom OpenAI** | `custom` | `CUSTOM_OPENAI_API_KEY` | Cloud | Streaming, JSON mode |
 
 ### Provider Auto-Detection
 
@@ -322,6 +412,11 @@ Run `aether env` to see which providers are ready.
 | `GEMINI_API_KEY` | Google Gemini API key | — |
 | `DEEPSEEK_API_KEY` | DeepSeek API key | — |
 | `OLLAMA_BASE_URL` | Ollama server URL | `http://localhost:11434/v1` |
+| `NVIDIA_API_KEY` | NVIDIA NIM API key | — |
+| `OPENROUTER_API_KEY` | OpenRouter API key | — |
+| `GROQ_API_KEY` | Groq API key | — |
+| `TOGETHER_API_KEY` | Together AI API key | — |
+| `CUSTOM_OPENAI_API_KEY` | Custom OpenAI endpoint key | — |
 | `AETHER_MAX_CONTEXT_TOKENS` | Max context tokens | `131072` (128K) |
 | `AETHER_MAX_HISTORY_TOKENS` | Max history tokens | `32768` (32K) |
 | `AETHER_MAX_HISTORY_MESSAGES` | Max history messages | `50` |
@@ -505,6 +600,7 @@ bun run src/tests/generate.test.ts   # 8 tests — code generation pipeline
 bun run src/tests/review.test.ts     # 9 tests — code review pipeline
 bun run src/tests/test.test.ts       # 10 tests — test generation/runner
 bun run src/tests/termux.test.ts     # 17 tests — Termux detection & config
+bun run src/tests/installer.test.ts  # 15 tests — installer & CLI runtime
 ```
 
 All tests use `bun run` with a manual test harness (not `bun test`).
@@ -521,7 +617,15 @@ src/
 │   ├── anthropic.ts    # Anthropic Claude provider
 │   ├── google.ts       # Google Gemini provider
 │   ├── deepseek.ts     # DeepSeek provider
-│   └── ollama.ts       # Ollama local provider
+│   ├── ollama.ts       # Ollama local provider
+│   ├── nvidia.ts       # NVIDIA NIM provider
+│   ├── openrouter.ts   # OpenRouter provider
+│   ├── groq.ts         # Groq provider
+│   ├── together.ts     # Together AI provider
+│   ├── lmstudio.ts     # LM Studio local provider
+│   ├── localai.ts      # LocalAI provider
+│   ├── vllm.ts         # vLLM local provider
+│   └── custom.ts       # Custom OpenAI-compatible provider
 ├── agents/             # Agent pipelines (generate, review, test)
 │   ├── generator.ts    # Code generation agent
 │   ├── reviewer.ts     # Code review agent
@@ -532,7 +636,12 @@ src/
 │   ├── generate.ts     # Generate command handler
 │   ├── review.ts       # Review command handler
 │   ├── setup.ts        # Interactive setup wizard
-│   └── test.ts         # Test command handler
+│   ├── test.ts         # Test command handler
+│   ├── doctor.ts       # Diagnostics (13+ checks)
+│   ├── update.ts       # Update checker
+│   ├── repair.ts       # Auto-repair
+│   ├── uninstall.ts    # Clean removal
+│   └── selftest.ts     # Test suite runner
 ├── context/            # Context management system
 │   ├── types.ts        # Shared types
 │   ├── indexer.ts      # File indexing
@@ -549,7 +658,7 @@ src/
 │   ├── linter.ts       # Code linting support
 │   ├── memory.ts       # Low-memory detection
 │   └── termux.ts       # Termux environment detection
-└── tests/              # Test suites
+└── tests/              # Test suites (82 tests total)
 ```
 
 ---
