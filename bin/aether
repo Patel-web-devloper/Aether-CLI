@@ -39,7 +39,8 @@ resolve_symlink() {
 SCRIPT_PATH="$(resolve_symlink "$0")"
 SCRIPT_DIR="$(dirname "$SCRIPT_PATH")"
 ROOT_DIR="$(dirname "$SCRIPT_DIR")"
-DIST_FILE="$ROOT_DIR/dist/cli.js"
+DIST_FILE="$ROOT_DIR/dist/cli.js"       # CJS build — for Node.js (Termux, Linux, macOS)
+DIST_BUN_FILE="$ROOT_DIR/dist/cli.bun.js"  # ESM build — for Bun
 
 # ── Debug / verbose output ───────────────────────────────────────────────────
 
@@ -347,12 +348,19 @@ debug "RUNTIME=$RUNTIME  RUNTIME_PATH=$RUNTIME_PATH"
 
 # ── Execute ──────────────────────────────────────────────────────────────────
 
-# If Bun, run via bun run for proper module resolution
+# If Bun, use the ESM-optimized Bun bundle
 if [ "$RUNTIME" = "bun" ]; then
-  debug "Running: bun run $DIST_FILE $*"
-  exec bun run "$DIST_FILE" "$@"
+  if [ -f "$DIST_BUN_FILE" ]; then
+    debug "Running: bun run $DIST_BUN_FILE $*"
+    exec bun run "$DIST_BUN_FILE" "$@"
+    EXIT_CODE=$?
+  else
+    # Fall back to CJS build if Bun bundle missing
+    debug "Bun bundle missing, falling back to CJS: bun run $DIST_FILE $*"
+    exec bun run "$DIST_FILE" "$@"
+    EXIT_CODE=$?
+  fi
   # If bun run fails, try Node fallback
-  EXIT_CODE=$?
   if command -v node >/dev/null 2>&1; then
     debug "bun run failed (exit $EXIT_CODE), falling back to Node"
     exec node "$DIST_FILE" "$@"
@@ -360,6 +368,6 @@ if [ "$RUNTIME" = "bun" ]; then
   exit $EXIT_CODE
 fi
 
-# Node path
+# Node.js — use the CJS build
 debug "Running: $RUNTIME_PATH $DIST_FILE $*"
 exec "$RUNTIME_PATH" "$DIST_FILE" "$@"
