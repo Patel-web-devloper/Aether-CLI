@@ -27,6 +27,11 @@ import { runSelfTest } from "./commands/selftest.js";
 import { detectAndSetMemoryMode, getMemorySummary, getLowMemoryWarning } from "./utils/memory.js";
 import type { GeneratorMode } from "./agents/generator.js";
 
+// Core services — v0.2 foundation
+import { eventBus } from "./core/events.js";
+import { TaskScheduler } from "./core/scheduler.js";
+import { container } from "./core/container.js";
+
 import { OpenAIProvider } from "./providers/openai.js";
 import { AnthropicProvider } from "./providers/anthropic.js";
 import { GoogleProvider } from "./providers/google.js";
@@ -61,6 +66,12 @@ providerRegistry.register(new CustomOpenAIProvider());
 
 // ── Detect memory mode early ──────────────────────────────────────────
 detectAndSetMemoryMode();
+
+// ── Register core services in the container ───────────────────────────
+const taskScheduler = new TaskScheduler({ maxConcurrent: 3, defaultRetries: 2 });
+container.register("eventBus", eventBus);
+container.register("taskScheduler", taskScheduler);
+container.register("providerRegistry", providerRegistry);
 
 const program = new Command();
 
@@ -703,6 +714,41 @@ contextCmd
     } else {
       // Default: list sessions
       await runContextHistory("list");
+    }
+  });
+
+// ── tasks (v0.2) ─────────────────────────────────────────────────────
+program
+  .command("tasks")
+  .description("Show task scheduler status and queue")
+  .option("--clear", "Clear completed/failed tasks")
+  .option("--reset", "Reset the scheduler entirely")
+  .action((options: { clear?: boolean; reset?: boolean }) => {
+    if (options.reset) {
+      taskScheduler.reset();
+      console.log(chalk.green("✓ Task scheduler reset"));
+      return;
+    }
+    if (options.clear) {
+      taskScheduler.clear();
+      console.log(chalk.green("✓ Completed/failed tasks cleared"));
+    }
+    const stats = taskScheduler.getStats();
+    console.log(chalk.bold("\nTask Scheduler Status"));
+    console.log(`  Max concurrent: ${stats.maxConcurrent}`);
+    console.log(`  Total tasks:    ${stats.total}`);
+    console.log(`  ${chalk.yellow("●")} Pending:   ${stats.pending}`);
+    console.log(`  ${chalk.cyan("●")} Running:   ${stats.running}`);
+    console.log(`  ${chalk.green("●")} Completed: ${stats.completed}`);
+    console.log(`  ${chalk.red("●")} Failed:    ${stats.failed}`);
+    console.log(`  ${chalk.dim("●")} Cancelled: ${stats.cancelled}`);
+
+    if (stats.total > 0) {
+      console.log(chalk.dim("\n  Tasks:"));
+      for (const task of taskScheduler.getAllTasks()) {
+        const icon = task.status === "completed" ? "✓" : task.status === "failed" ? "✗" : task.status === "running" ? "⟳" : "○";
+        console.log(chalk.dim(`    ${icon} [${task.type}] ${task.id.slice(0, 8)}... (priority: ${task.priority})`));
+      }
     }
   });
 
