@@ -6,8 +6,8 @@
     "aether": "./bin/aether"
   },
   "scripts": {
-    "build": "bun build src/cli.ts --outfile dist/cli.js --target node && bun build src/cli.ts --outfile dist/cli.bun.js --target bun --format esm",
-    "build:node": "bun build src/cli.ts --outfile dist/cli.js --target node",
+    "build": "bun build src/cli.ts --outfile dist/cli.js --target node --format cjs && bun build src/cli.ts --outfile dist/cli.bun.js --target bun --format esm",
+    "build:node": "bun build src/cli.ts --outfile dist/cli.js --target node --format cjs",
     "build:bun": "bun build src/cli.ts --outfile dist/cli.bun.js --target bun --format esm",
     "start": "if command -v bun >/dev/null 2>&1 && [ \"${AETHER_FORCE_NODE:-0}\" != \"1\" ]; then bun run dist/cli.bun.js; else node dist/cli.js; fi",
     "start:node": "node dist/cli.js",
