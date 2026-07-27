@@ -7,13 +7,14 @@
   },
   "scripts": {
     "build": "bun build src/cli.ts --outfile dist/cli.js --target node --format cjs && bun build src/cli.ts --outfile dist/cli.bun.js --target bun --format esm",
-    "build:node": "bun build src/cli.ts --outfile dist/cli.js --target node --format cjs",
+    "build:node": "esbuild src/cli.ts --bundle --platform=node --format=cjs --outfile=dist/cli.js",
     "build:bun": "bun build src/cli.ts --outfile dist/cli.bun.js --target bun --format esm",
     "start": "if command -v bun >/dev/null 2>&1 && [ \"${AETHER_FORCE_NODE:-0}\" != \"1\" ]; then bun run dist/cli.bun.js; else node dist/cli.js; fi",
     "start:node": "node dist/cli.js",
     "start:bun": "bun run dist/cli.bun.js",
     "dev": "bun run src/cli.ts",
-    "typecheck": "bun run tsc --noEmit"
+    "dev:node": "tsx src/cli.ts",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",
@@ -24,7 +25,10 @@
     "ora": "^8.2.0"
   },
   "devDependencies": {
-    "@types/bun": "^1.2.4"
+    "@types/bun": "^1.2.4",
+    "esbuild": "^0.24.2",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3"
   },
   "license": "MIT",
   "keywords": [
@@ -49,6 +53,6 @@
   "author": "Aether CLI Contributors",
   "repository": {
     "type": "git",
-    "url": "https://github.com/aether-cli/aether-cli"
+    "url": "https://github.com/Patel-web-devloper/aether-cli.git"
   }
 }
