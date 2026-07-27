@@ -1,7 +1,7 @@
 {
   "name": "aether-cli",
   "version": "0.1.0",
-  "description": "A lightweight, multi-model CLI AI coding agent for Termux on Android. Generate, review, and test code through any LLM provider — provider-agnostic, offline-ready, all from your terminal.",
+  "description": "A lightweight, multi-model AI coding agent for Termux on Android. Generate, review, and test code through any LLM provider — provider-agnostic, offline-ready, all from your terminal.",
   "homepage": "https://github.com/Patel-web-devloper/Aether-CLI#readme",
   "bin": {
     "aether": "./bin/aether"
@@ -57,11 +57,11 @@
     "typescript"
   ],
   "bugs": {
-  "url": "https://github.com/Patel-web-devloper/Aether-CLI/issues"
+    "url": "https://github.com/Patel-web-devloper/Aether-CLI/issues"
   },
   "author": "Aether CLI Contributors",
   "repository": {
     "type": "git",
-    "url": "https://github.com/Patel-web-devloper/aether-cli"
+    "url": "https://github.com/Patel-web-devloper/aether-cli.git"
   }
 }
