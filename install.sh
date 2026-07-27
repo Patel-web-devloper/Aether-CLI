@@ -877,7 +877,9 @@ npm_install() {
 
   cd "$INSTALL_DIR"
 
-  if command -v bun >/dev/null 2>&1 && ! is_termux_env; then
+  if is_termux_env; then
+    info "Termux detected — using npm for dependency installation"
+  elif command -v bun >/dev/null 2>&1; then
     info "Using Bun for dependency installation"
     if retry bun install --frozen-lockfile 2>/dev/null; then
       success "Dependencies installed (Bun)"
@@ -896,8 +898,8 @@ npm_install() {
     fail "npm not found — cannot install dependencies"
   fi
 
-  # Attempt 1: normal
-  if retry npm install --production --no-audit --no-fund 2>/dev/null; then
+  # Attempt 1: normal (devDependencies are needed too — esbuild powers build:node)
+  if retry npm install --no-audit --no-fund 2>/dev/null; then
     success "Dependencies installed (npm)"
     return 0
   fi
@@ -933,31 +935,45 @@ do_build() {
 
   if [ "$FLAG_DRY_RUN" = "true" ]; then
     echo -e "  ${DIM}[dry-run]${NC} Would build CLI"
-    echo "bun" > "${INSTALL_DIR}/.build-backend" 2>/dev/null || true
+    if is_termux_env; then
+      echo "node" > "${INSTALL_DIR}/.build-backend" 2>/dev/null || true
+    else
+      echo "bun" > "${INSTALL_DIR}/.build-backend" 2>/dev/null || true
+    fi
     return 0
   fi
 
   cd "$INSTALL_DIR"
 
-  if command -v bun >/dev/null 2>&1; then
-    if bun run build 2>/dev/null; then
-      echo "bun" > "${INSTALL_DIR}/.build-backend"
-      success "Build completed (Bun bundler)"
+  if is_termux_env; then
+    info "Termux detected — building with Node.js"
+    if command -v npm >/dev/null 2>&1 && npm run build:node 2>/dev/null; then
+      echo "node" > "${INSTALL_DIR}/.build-backend"
+      success "Build completed (Node)"
       return 0
     fi
-    warn "Bun build failed — trying alternatives..."
+    warn "npm run build:node failed — trying Node-only alternatives..."
+  else
+    if command -v bun >/dev/null 2>&1; then
+      if bun run build 2>/dev/null; then
+        echo "bun" > "${INSTALL_DIR}/.build-backend"
+        success "Build completed (Bun bundler)"
+        return 0
+      fi
+      warn "Bun build failed — trying alternatives..."
+    fi
+
+    # npm run build:node (Node fallback when Bun is unavailable or fails)
+    if command -v npm >/dev/null 2>&1 && npm run build:node 2>/dev/null; then
+      echo "node" > "${INSTALL_DIR}/.build-backend"
+      success "Build completed (npm/Node)"
+      return 0
+    fi
   fi
 
-  # npm run build
-  if command -v npm >/dev/null 2>&1 && npm run build 2>/dev/null; then
-    echo "npm" > "${INSTALL_DIR}/.build-backend"
-    success "Build completed (npm)"
-    return 0
-  fi
-
-  # esbuild via npx
+  # esbuild via npx (Node-only, last-resort path for both Termux and other platforms)
   if command -v npx >/dev/null 2>&1; then
-    if npx --yes esbuild src/cli.ts --bundle --platform=node --format=esm --outfile=dist/cli.js 2>/dev/null; then
+    if npx --yes esbuild src/cli.ts --bundle --platform=node --format=cjs --outfile=dist/cli.js 2>/dev/null; then
       echo "esbuild" > "${INSTALL_DIR}/.build-backend"
       success "Build completed (esbuild/npx)"
       return 0
@@ -1231,9 +1247,9 @@ verify_install() {
       local ver
       ver="$("${INSTALL_DIR}/bin/aether" --version 2>/dev/null || echo "unknown")"
       success "Aether CLI is working (version: $ver)"
-    elif node "${INSTALL_DIR}/dist/cli.js" --version >/dev/null 2>&1; then
+    elif command -v node >/dev/null 2>&1 && node "${INSTALL_DIR}/dist/cli.js" --version >/dev/null 2>&1; then
       success "Aether CLI is working (via Node)"
-    elif bun run "${INSTALL_DIR}/dist/cli.js" --version >/dev/null 2>&1; then
+    elif ! is_termux_env && command -v bun >/dev/null 2>&1 && bun run "${INSTALL_DIR}/dist/cli.js" --version >/dev/null 2>&1; then
       success "Aether CLI is working (via Bun)"
     else
       warn "CLI installed but not responding — check runtime availability"
