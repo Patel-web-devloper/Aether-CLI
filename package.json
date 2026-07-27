@@ -56,6 +56,9 @@
     "developer",
     "typescript"
   ],
+  "bugs": {
+  "url": "https://github.com/Patel-web-devloper/Aether-CLI/issues"
+  }
   "author": "Aether CLI Contributors",
   "repository": {
     "type": "git",
