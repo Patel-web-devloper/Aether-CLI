@@ -877,7 +877,7 @@ npm_install() {
 
   cd "$INSTALL_DIR"
 
-  if command -v bun >/dev/null 2>&1; then
+  if command -v bun >/dev/null 2>&1 && ! is_termux_env; then
     info "Using Bun for dependency installation"
     if retry bun install --frozen-lockfile 2>/dev/null; then
       success "Dependencies installed (Bun)"
