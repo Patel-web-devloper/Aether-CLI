@@ -48,11 +48,16 @@
     "deepseek",
     "ollama",
     "developer-tools",
-    "bun"
+    "bun",
+    "terminal",
+    "cli-tool",
+    "artificial-intelligence",
+    "developer",
+    "typescript"
   ],
   "author": "Aether CLI Contributors",
   "repository": {
     "type": "git",
-    "url": "https://github.com/Patel-web-devloper/aether-cli.git"
+    "url": "https://github.com/Patel-web-devloper/aether-cli"
   }
 }
