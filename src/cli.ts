@@ -24,6 +24,7 @@ import { runUpdate } from "./commands/update.js";
 import { runRepair } from "./commands/repair.js";
 import { runUninstall } from "./commands/uninstall.js";
 import { runSelfTest } from "./commands/selftest.js";
+import { runWorkflowCommand } from "./commands/workflow.js";
 import { detectAndSetMemoryMode, getMemorySummary, getLowMemoryWarning } from "./utils/memory.js";
 import type { GeneratorMode } from "./agents/generator.js";
 
@@ -31,6 +32,10 @@ import type { GeneratorMode } from "./agents/generator.js";
 import { eventBus } from "./core/events.js";
 import { TaskScheduler } from "./core/scheduler.js";
 import { container } from "./core/container.js";
+
+// Multi-agent orchestration — v0.3
+import { Orchestrator } from "./agents/orchestrator.js";
+import { createDefaultAgents } from "./agents/workflows.js";
 
 import { OpenAIProvider } from "./providers/openai.js";
 import { AnthropicProvider } from "./providers/anthropic.js";
@@ -72,6 +77,12 @@ const taskScheduler = new TaskScheduler({ maxConcurrent: 3, defaultRetries: 2 })
 container.register("eventBus", eventBus);
 container.register("taskScheduler", taskScheduler);
 container.register("providerRegistry", providerRegistry);
+
+// ── Multi-agent orchestrator (v0.3) ───────────────────────────────────
+// Dedicated scheduler: workflow step tasks must not retry LLM calls.
+const workflowScheduler = new TaskScheduler({ maxConcurrent: 3, defaultRetries: 0, retryDelay: 0 });
+const orchestrator = new Orchestrator(createDefaultAgents(), workflowScheduler, eventBus);
+container.register("orchestrator", orchestrator);
 
 const program = new Command();
 
@@ -750,6 +761,84 @@ program
         console.log(chalk.dim(`    ${icon} [${task.type}] ${task.id.slice(0, 8)}... (priority: ${task.priority})`));
       }
     }
+  });
+
+// ── workflow (v0.3 — multi-agent orchestration) ──────────────────────
+program
+  .command("workflow")
+  .description("Run a multi-agent workflow")
+  .argument("[name]", "Workflow name (run with --list to see available workflows)")
+  .argument("[prompt]", "Prompt describing the work to do")
+  .option("-p, --provider <name>", "LLM provider to use", getConfig().provider || "openai")
+  .option("-m, --model <name>", "Model name for the provider")
+  .option("-t, --target <dir>", "Target directory", process.cwd())
+  .option("-d, --dry-run", "Preview steps without executing", false)
+  .option("--list", "List available workflows", false)
+  .option("--json", "Output results as JSON", false)
+  .addHelpText(
+    "after",
+    `\n${chalk.dim("Examples:")}
+  ${chalk.white("$ aether workflow --list")}
+  ${chalk.white("$ aether workflow quick-build \"Add a sum utility to src/utils\" --provider deepseek")}
+  ${chalk.white("$ aether workflow full-cycle \"Build a todo API\" --target ./server --dry-run")}
+  ${chalk.white("$ aether workflow security-audit \"Audit the codebase\" --json")}
+  ${chalk.white("$ aether workflow docs-only \"Write a README\" -p ollama -m llama3.2")}`,
+  )
+  .action(async (name: string | undefined, prompt: string | undefined, options: {
+    provider: string;
+    model?: string;
+    target: string;
+    dryRun: boolean;
+    list: boolean;
+    json: boolean;
+  }) => {
+    // ── --list never needs a provider ────────────────────────────────
+    if (options.list) {
+      const ok = await runWorkflowCommand({
+        provider: providerRegistry.get(options.provider),
+        targetDir: options.target,
+        dryRun: options.dryRun,
+        json: options.json,
+        list: true,
+        orchestrator,
+        eventBus,
+        container,
+      });
+      if (!ok) process.exit(1);
+      return;
+    }
+
+    // ── Resolve and init provider ────────────────────────────────────
+    // Dry-run never calls the LLM, so provider initialization is skipped
+    // (mirrors the review command) — no API key required for previews.
+    let provider;
+    try {
+      provider = providerRegistry.get(options.provider);
+      if (!options.dryRun) {
+        await provider.initialize();
+      }
+    } catch (err: unknown) {
+      console.error(
+        chalk.red("Provider error:"),
+        err instanceof Error ? err.message : String(err),
+      );
+      process.exit(1);
+    }
+
+    const ok = await runWorkflowCommand({
+      workflowName: name,
+      prompt,
+      provider,
+      model: options.model,
+      targetDir: options.target,
+      dryRun: options.dryRun,
+      json: options.json,
+      list: false,
+      orchestrator,
+      eventBus,
+      container,
+    });
+    if (!ok) process.exit(1);
   });
 
 // ── Parse ───────────────────────────────────────────────────────────
