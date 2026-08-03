@@ -11,6 +11,13 @@ import { scanDirectory, type ProjectContext } from "../utils/scanner.js";
 import { readFile, stat } from "node:fs/promises";
 import { resolve, relative, basename, extname } from "node:path";
 import type { ContextManager, ContextPayload } from "../context/manager.js";
+import {
+  Agent,
+  type AgentInput,
+  type AgentContext,
+  type AgentOutput,
+  type ReviewIssue,
+} from "./base.js";
 
 // ── public types ─────────────────────────────────────────────────────────
 
@@ -368,7 +375,11 @@ Important:
 
 // ── response parser ──────────────────────────────────────────────────────
 
-function parseReviewResponse(raw: string): ReviewResult[] {
+/**
+ * Parse a review/audit response into structured findings. Exported so the
+ * SecurityAgent can reuse the same `### ISSUE:` parsing logic.
+ */
+export function parseReviewResponse(raw: string): ReviewResult[] {
   const normalized = raw.replace(/\r\n/g, "\n");
 
   // Check for no-issues marker
@@ -484,4 +495,46 @@ export function filterBySeverity(
 ): ReviewResult[] {
   const minOrder = SEVERITY_ORDER[minSeverity];
   return results.filter((r) => SEVERITY_ORDER[r.severity] <= minOrder);
+}
+
+// ── ReviewerAgent (agent-class wrapper) ───────────────────────────────────
+
+/**
+ * Agent-class wrapper around `reviewTarget`, used by the workflow
+ * orchestrator. The standalone `reviewTarget` function is preserved for
+ * the `aether review` command and backward compatibility.
+ */
+export class ReviewerAgent extends Agent {
+  readonly name = "reviewer";
+  readonly description = "Review code for bugs, security issues, and improvements";
+  readonly capabilities = ["code-review", "bug-detection"];
+
+  async execute(input: AgentInput, context: AgentContext): Promise<AgentOutput> {
+    if (context.dryRun) return this.dryRunOutput(input, context);
+
+    const target = input.files?.[0] ?? context.targetDir;
+    const result = await reviewTarget({
+      provider: context.provider,
+      model: context.model,
+      target,
+      severity: input.options?.severity as Severity | undefined,
+      maxTokens: input.options?.maxTokens as number | undefined,
+    });
+
+    const issues: ReviewIssue[] = result.results.map((r) => ({
+      file: r.file,
+      line: r.line,
+      severity: r.severity,
+      category: r.category,
+      message: r.message,
+      fix: r.fix,
+    }));
+
+    return {
+      success: true,
+      result: { filesReviewed: result.filesReviewed, issueCount: issues.length },
+      issues,
+      metadata: { agent: this.name, duration: 0, modelUsed: context.model },
+    };
+  }
 }

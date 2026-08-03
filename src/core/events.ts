@@ -31,13 +31,19 @@ export type SystemEvent =
   | { type: "system:startup"; duration: number }
   | { type: "system:shutdown" };
 
-export type AetherEvent = AgentLifecycleEvent | TaskLifecycleEvent | SystemEvent;
+export type WorkflowLifecycleEvent =
+  | { type: "workflow:start"; workflow: string; steps: string[]; timestamp: number }
+  | { type: "workflow:step-start"; workflow: string; step: string; agent: string; timestamp: number }
+  | { type: "workflow:step-done"; workflow: string; step: string; agent: string; status: "success" | "failed" | "skipped"; duration: number }
+  | { type: "workflow:done"; workflow: string; success: boolean; duration: number };
+
+export type AetherEvent = AgentLifecycleEvent | TaskLifecycleEvent | SystemEvent | WorkflowLifecycleEvent;
 
 export type EventHandler<T extends AetherEvent> = (event: T) => void;
 
 // ── EventBus class ──────────────────────────────────────────────────────────
 
-class EventBus {
+export class EventBus {
   private emitter: EventEmitter;
   private handlers: Map<string, Set<EventHandler<AetherEvent>>> = new Map();
 

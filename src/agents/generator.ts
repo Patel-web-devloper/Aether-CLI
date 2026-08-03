@@ -10,6 +10,13 @@ import type { LLMProvider, ChatMessage } from "../providers/base.js";
 import { scanDirectory, type ProjectContext } from "../utils/scanner.js";
 import { resolve, relative } from "node:path";
 import type { ContextManager, ContextPayload } from "../context/manager.js";
+import {
+  Agent,
+  type AgentInput,
+  type AgentContext,
+  type AgentOutput,
+  type GeneratedFile,
+} from "./base.js";
 
 // ── public types ─────────────────────────────────────────────────────────
 
@@ -267,9 +274,10 @@ function formatConfigFiles(cfgs: Record<string, unknown>): string {
 
 /**
  * Parse the LLM response looking for `### FILE: path` markers followed by
- * fenced code blocks.
+ * fenced code blocks. Exported so other code-producing agents (coder, docs,
+ * devops) can reuse the same parsing logic.
  */
-function parseResponse(
+export function parseResponse(
   raw: string,
   targetDir: string,
   mode: GeneratorMode,
@@ -363,4 +371,44 @@ function langToExt(lang: string): string {
     text: "txt",
   };
   return map[lang.toLowerCase()] ?? "txt";
+}
+
+// ── GeneratorAgent (agent-class wrapper) ──────────────────────────────────
+
+/**
+ * Agent-class wrapper around `generateFromPrompt`, used by the workflow
+ * orchestrator. The standalone `generateFromPrompt` function is preserved
+ * for the `aether generate` command and backward compatibility.
+ */
+export class GeneratorAgent extends Agent {
+  readonly name = "generator";
+  readonly description = "Generate code files from a natural-language prompt";
+  readonly capabilities = ["code-generation"];
+
+  async execute(input: AgentInput, context: AgentContext): Promise<AgentOutput> {
+    if (context.dryRun) return this.dryRunOutput(input, context);
+
+    const mode = (input.options?.mode as GeneratorMode | undefined) ?? "auto";
+    const result = await generateFromPrompt(input.prompt, {
+      provider: context.provider,
+      model: context.model,
+      mode,
+      targetDir: context.targetDir,
+      maxTokens: input.options?.maxTokens as number | undefined,
+    });
+
+    const files: GeneratedFile[] = result.files.map((f) => ({
+      path: f.path,
+      content: f.content,
+      language: f.language,
+      action: f.action,
+    }));
+
+    return {
+      success: true,
+      result: { fileCount: files.length },
+      files,
+      metadata: { agent: this.name, duration: 0, modelUsed: context.model },
+    };
+  }
 }

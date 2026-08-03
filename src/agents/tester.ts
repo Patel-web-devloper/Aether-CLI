@@ -12,6 +12,13 @@ import { resolve, relative, dirname, basename, extname } from "node:path";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import type { ContextManager, ContextPayload } from "../context/manager.js";
+import {
+  Agent,
+  type AgentInput,
+  type AgentContext,
+  type AgentOutput,
+  type GeneratedFile,
+} from "./base.js";
 
 // ── public types ─────────────────────────────────────────────────────────
 
@@ -494,4 +501,47 @@ function langToExt(lang: string): string {
     python: "py", py: "py",
   };
   return map[lang.toLowerCase()] ?? "ts";
+}
+
+// ── TesterAgent (agent-class wrapper) ─────────────────────────────────────
+
+/**
+ * Agent-class wrapper around `generateTests`, used by the workflow
+ * orchestrator. The standalone `generateTests` function is preserved for
+ * the `aether test` command and backward compatibility.
+ */
+export class TesterAgent extends Agent {
+  readonly name = "tester";
+  readonly description = "Generate tests for code";
+  readonly capabilities = ["test-generation"];
+
+  async execute(input: AgentInput, context: AgentContext): Promise<AgentOutput> {
+    if (context.dryRun) return this.dryRunOutput(input, context);
+
+    const target = input.files?.[0] ?? context.targetDir;
+    const result = await generateTests({
+      provider: context.provider,
+      model: context.model,
+      target,
+      framework: input.options?.framework as TestFramework | undefined,
+      maxTokens: input.options?.maxTokens as number | undefined,
+    });
+
+    const files: GeneratedFile[] = result.files.map((f) => ({
+      path: f.path,
+      content: f.content,
+      language: f.language,
+    }));
+
+    return {
+      success: true,
+      result: {
+        framework: result.framework,
+        testPattern: result.testPattern,
+        fileCount: files.length,
+      },
+      files,
+      metadata: { agent: this.name, duration: 0, modelUsed: context.model },
+    };
+  }
 }
