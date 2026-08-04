@@ -25,6 +25,8 @@ import { runRepair } from "./commands/repair.js";
 import { runUninstall } from "./commands/uninstall.js";
 import { runSelfTest } from "./commands/selftest.js";
 import { runWorkflowCommand } from "./commands/workflow.js";
+import { runGitCommand } from "./commands/git.js";
+import type { GitMode } from "./agents/git.js";
 import { detectAndSetMemoryMode, getMemorySummary, getLowMemoryWarning } from "./utils/memory.js";
 import type { GeneratorMode } from "./agents/generator.js";
 
@@ -840,6 +842,24 @@ program
     });
     if (!ok) process.exit(1);
   });
+
+// ── git intelligence (v0.2) ─────────────────────────────────────────
+const gitCommand = program.command("git").description("AI-powered git intelligence");
+const addGitOptions = (command: Command) => command
+  .option("-p, --provider <name>", "LLM provider to use", getConfig().provider || "openai")
+  .option("-m, --model <name>", "Model name for the provider")
+  .option("-t, --target <dir>", "Target directory", process.cwd());
+const runGit = async (mode: GitMode, options: { provider: string; model?: string; target: string; dryRun?: boolean; json?: boolean; noStage?: boolean; messageOnly?: boolean }) => {
+  let provider;
+  try { provider = providerRegistry.get(options.provider); if (!options.dryRun) await provider.initialize(); }
+  catch (err: unknown) { console.error(chalk.red("Provider error:"), err instanceof Error ? err.message : String(err)); process.exit(1); }
+  const ok = await runGitCommand({ mode, provider: provider!, model: options.model, targetDir: options.target, dryRun: options.dryRun, json: options.json, noStage: options.noStage, messageOnly: options.messageOnly }, eventBus, container);
+  if (!ok) process.exit(1);
+};
+addGitOptions(gitCommand.command("commit").description("Generate and create a conventional commit").argument("[path]").option("-d, --dry-run", "Preview without committing", false).option("--no-stage", "Only commit already staged files", false).option("--message-only", "Print message without committing", false)).action((path: string | undefined, options: { provider: string; model?: string; target: string; dryRun: boolean; noStage: boolean; messageOnly: boolean }) => runGit("commit", { ...options, target: path ?? options.target }));
+addGitOptions(gitCommand.command("review").description("Review a git diff").argument("[ref]").option("--base <ref>", "Base ref to diff against").option("--json", "Output JSON", false)).action((_ref: string | undefined, options: { provider: string; model?: string; target: string; json: boolean }) => runGit("review", options));
+addGitOptions(gitCommand.command("changelog").description("Generate a Keep-a-Changelog document").option("--from <ref>", "Starting ref").option("--to <ref>", "Ending ref", "HEAD").option("--output <file>", "Write to file")).action((options: { provider: string; model?: string; target: string; output?: string }) => runGit("changelog", options));
+addGitOptions(gitCommand.command("branch-plan").description("Suggest a branch merge plan").option("--json", "Output JSON", false)).action((options: { provider: string; model?: string; target: string; json: boolean }) => runGit("branch-plan", options));
 
 // ── Parse ───────────────────────────────────────────────────────────
 // If no command is given, show help.
