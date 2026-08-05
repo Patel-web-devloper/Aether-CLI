@@ -81,6 +81,8 @@ export abstract class Agent {
 
   // ── Optional lifecycle hooks (subclasses override) ─────────────────────
   beforeExecute?(input: AgentInput, context: AgentContext): Promise<void>;
+  /** Optional context enrichment hook, called immediately before execute. */
+  enrichContext?(context: AgentContext): Promise<AgentContext>;
   afterExecute?(output: AgentOutput, context: AgentContext): Promise<void>;
   onError?(error: Error, context: AgentContext): Promise<void>;
 
@@ -103,6 +105,9 @@ export abstract class Agent {
     try {
       if (this.beforeExecute) {
         await this.beforeExecute(input, context);
+      }
+      if (this.enrichContext) {
+        context = await this.enrichContext(context);
       }
 
       const output = await this.execute(input, context);

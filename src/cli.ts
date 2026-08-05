@@ -29,6 +29,9 @@ import { runGitCommand } from "./commands/git.js";
 import type { GitMode } from "./agents/git.js";
 import { detectAndSetMemoryMode, getMemorySummary, getLowMemoryWarning } from "./utils/memory.js";
 import type { GeneratorMode } from "./agents/generator.js";
+import { MemoryStore } from "./memory/store.js";
+import { MemoryAgent } from "./agents/memory.js";
+import { setupAutoMemory } from "./memory/auto-memory.js";
 
 // Core services — v0.2 foundation
 import { eventBus } from "./core/events.js";
@@ -79,6 +82,10 @@ const taskScheduler = new TaskScheduler({ maxConcurrent: 3, defaultRetries: 2 })
 container.register("eventBus", eventBus);
 container.register("taskScheduler", taskScheduler);
 container.register("providerRegistry", providerRegistry);
+const memoryStore = new MemoryStore();
+container.register("memoryStore", memoryStore);
+container.register("memoryAgent", new MemoryAgent());
+setupAutoMemory(eventBus, memoryStore, container);
 
 // ── Multi-agent orchestrator (v0.3) ───────────────────────────────────
 // Dedicated scheduler: workflow step tasks must not retry LLM calls.
@@ -860,6 +867,16 @@ addGitOptions(gitCommand.command("commit").description("Generate and create a co
 addGitOptions(gitCommand.command("review").description("Review a git diff").argument("[ref]").option("--base <ref>", "Base ref to diff against").option("--json", "Output JSON", false)).action((_ref: string | undefined, options: { provider: string; model?: string; target: string; json: boolean }) => runGit("review", options));
 addGitOptions(gitCommand.command("changelog").description("Generate a Keep-a-Changelog document").option("--from <ref>", "Starting ref").option("--to <ref>", "Ending ref", "HEAD").option("--output <file>", "Write to file")).action((options: { provider: string; model?: string; target: string; output?: string }) => runGit("changelog", options));
 addGitOptions(gitCommand.command("branch-plan").description("Suggest a branch merge plan").option("--json", "Output JSON", false)).action((options: { provider: string; model?: string; target: string; json: boolean }) => runGit("branch-plan", options));
+
+// ── memory ─────────────────────────────────────────────────────────
+const memoryCommand = program.command("memory").description("Manage persistent project memory");
+memoryCommand.command("index").description("Index project files").option("-t, --target <dir>", "Project root", process.cwd()).option("-p, --provider <name>", "LLM provider", getConfig().provider || "openai").option("-m, --model <name>", "Model name").action(async (options: { target: string; provider: string; model?: string }) => {
+  const provider = providerRegistry.get(options.provider); const agent = container.get<MemoryAgent>("memoryAgent");
+  try { await provider.initialize(); const result = await agent.run({ prompt: "Index project", options: { mode: "index" } }, { provider, model: options.model, targetDir: options.target, eventBus, container, dryRun: false }); console.log(JSON.stringify(result.result, null, 2)); } catch (err) { console.error(chalk.red(String(err))); process.exit(1); }
+});
+memoryCommand.command("status").description("Show memory statistics").option("-t, --target <dir>", "Project root", process.cwd()).action(async (options: { target: string }) => { const files = await memoryStore.getProjectFiles(options.target); const decisions = await memoryStore.getDecisions(options.target); const tasks = await memoryStore.getTaskHistory(options.target); console.log(`Files indexed: ${Object.keys(files).length}\nDecisions: ${decisions.length}\nTasks: ${tasks.length}`); });
+memoryCommand.command("recall").description("Search project memory").argument("<query>").option("-t, --target <dir>", "Project root", process.cwd()).action(async (query: string, options: { target: string }) => { const agent = container.get<MemoryAgent>("memoryAgent"); const provider = providerRegistry.get(getConfig().provider || "openai"); const result = await agent.run({ prompt: query, options: { mode: "recall", query } }, { provider, targetDir: options.target, eventBus, container, dryRun: true }); console.log(JSON.stringify(result.result, null, 2)); });
+memoryCommand.command("forget").description("Clear project memory").option("-t, --target <dir>", "Project root", process.cwd()).action(async (options: { target: string }) => { await memoryStore.clearProject(options.target); console.log("Project memory cleared."); });
 
 // ── Parse ───────────────────────────────────────────────────────────
 // If no command is given, show help.
