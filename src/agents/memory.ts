@@ -12,7 +12,23 @@ export class MemoryAgent extends Agent {
   private store(context: AgentContext) { return context.container.get<MemoryStore>("memoryStore"); }
 
   async enrichContext(context: AgentContext): Promise<AgentContext> {
-    return context;
+    try {
+      const store = this.store(context);
+      const [files, decisions] = await Promise.all([
+        store.getProjectFiles(context.targetDir),
+        store.getDecisions(context.targetDir),
+      ]);
+      return {
+        ...context,
+        memoryContext: {
+          files: Object.entries(files).map(([path, summary]) => ({ path, summary })),
+          decisions,
+        },
+      };
+    } catch {
+      // No MemoryStore registered (or store read failed) — leave context untouched.
+      return context;
+    }
   }
   async execute(input: AgentInput, context: AgentContext): Promise<AgentOutput> {
     const mode = String(input.options?.mode ?? "index");

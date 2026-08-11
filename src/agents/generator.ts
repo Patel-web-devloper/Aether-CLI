@@ -8,7 +8,8 @@
 
 import type { LLMProvider, ChatMessage } from "../providers/base.js";
 import { scanDirectory, type ProjectContext } from "../utils/scanner.js";
-import { resolve, relative } from "node:path";
+import { resolve } from "node:path";
+import type { MemoryStore } from "../memory/store.js";
 import type { ContextManager, ContextPayload } from "../context/manager.js";
 import {
   Agent,
@@ -46,6 +47,16 @@ export interface GeneratorOptions {
   maxTokens?: number;
   /** Optional context manager for enhanced context building. */
   contextManager?: ContextManager;
+  /** Existing files (read from disk) that memory search matched — injected into the prompt as files to modify. */
+  memoryFiles?: Array<{ path: string; content: string }>;
+  /** Past decisions relevant to the prompt — injected into the prompt as extra context. */
+  memoryDecisions?: Array<{ question: string; answer: string }>;
+}
+
+/** Memory matches found by GeneratorAgent before generation. */
+export interface MemoryMatches {
+  files: Array<{ path: string; content: string }>;
+  decisions: Array<{ question: string; answer: string }>;
 }
 
 export interface GeneratorResult {
@@ -104,6 +115,14 @@ export async function generateFromPrompt(
     systemPrompt = buildSystemPromptFromPayload(contextPayload, options.mode);
   } else {
     systemPrompt = buildSystemPrompt(context, options.mode);
+  }
+
+  // ── 2b. Inject memory-aware edit context (matched files + decisions) ──
+  if (
+    (options.memoryFiles && options.memoryFiles.length > 0) ||
+    (options.memoryDecisions && options.memoryDecisions.length > 0)
+  ) {
+    systemPrompt = appendMemoryContext(systemPrompt, options.memoryFiles ?? [], options.memoryDecisions ?? []);
   }
 
   // ── 3. Call provider ─────────────────────────────────────────────────
@@ -247,6 +266,41 @@ function buildSystemPromptFromPayload(payload: ContextPayload, mode: GeneratorMo
   return sections.join("\n");
 }
 
+/**
+ * Append memory-aware edit instructions to a system prompt when MemoryStore
+ * search found existing files (and/or decisions) relevant to the prompt.
+ * The model is told which files need modification, shown their full content,
+ * and asked to emit `### EDIT:` markers with precise line-level changes.
+ */
+function appendMemoryContext(
+  base: string,
+  files: Array<{ path: string; content: string }>,
+  decisions: Array<{ question: string; answer: string }>,
+): string {
+  const sections: string[] = [base, ""];
+  if (files.length > 0) {
+    sections.push("EXISTING FILES THAT NEED MODIFICATION:");
+    for (const f of files) {
+      sections.push(`─── ${f.path} ───`);
+      sections.push(f.content);
+      sections.push("");
+    }
+  }
+  if (decisions.length > 0) {
+    sections.push("RELEVANT PAST DECISIONS (from project memory):");
+    for (const d of decisions) sections.push(`- ${d.question} → ${d.answer}`);
+    sections.push("");
+  }
+  sections.push("These existing files need modification. Output EXACTLY which file, which lines, what to change.");
+  sections.push("- For each modified file output: ### EDIT: path/to/file.ts");
+  sections.push("- Optionally annotate the exact lines on the line right after the marker, e.g. `L12-20: replace upper-case with lower-case`");
+  sections.push("- Immediately followed by a code fence containing the COMPLETE updated file content (the full file exactly as it should read after your change)");
+  sections.push("- Use diff-style +/- lines inside the fence only to illustrate removed/added lines; the fence content is the authoritative full file");
+  sections.push("- Preserve all unrelated code exactly as-is — never omit or reorder code you are not changing");
+  sections.push("- Keep the same file path as shown above");
+  return sections.join("\n");
+}
+
 function formatConfigFiles(cfgs: Record<string, unknown>): string {
   const keys = Object.keys(cfgs);
   if (keys.length === 0) return "  (none)";
@@ -285,9 +339,10 @@ export function parseResponse(
   const files: GeneratorOutput[] = [];
   const normalized = raw.replace(/\r\n/g, "\n");
 
-  // Match: ### FILE: path/to/file.ext (with optional whitespace)
-  // followed by a fenced code block: ```lang\n...\n```
-  const filePattern = /###\s+FILE:\s*(\S+)\s*\n\s*```(\w*)\s*\n([\s\S]*?)```/g;
+  // Match: ### FILE: path/to/file.ext OR ### EDIT: path/to/file.ext
+  // followed by an optional annotation line (e.g. "L12-20: ...") and then a
+  // fenced code block: ```lang\n...\n```
+  const filePattern = /###\s+(?:FILE|EDIT):\s*(\S+)\s*\n(?:[^\n`]*\n)?\s*```(\w*)\s*\n([\s\S]*?)```/g;
 
   let match;
   while ((match = filePattern.exec(normalized)) !== null) {
@@ -389,12 +444,17 @@ export class GeneratorAgent extends Agent {
     if (context.dryRun) return this.dryRunOutput(input, context);
 
     const mode = (input.options?.mode as GeneratorMode | undefined) ?? "auto";
+    // Memory-aware: find existing files + past decisions relevant to the prompt
+    // so edits target real code instead of guessing from a scan tree alone.
+    const memory = await this.findMemoryMatches(input.prompt, context);
     const result = await generateFromPrompt(input.prompt, {
       provider: context.provider,
       model: context.model,
       mode,
       targetDir: context.targetDir,
       maxTokens: input.options?.maxTokens as number | undefined,
+      memoryFiles: memory?.files,
+      memoryDecisions: memory?.decisions,
     });
 
     const files: GeneratedFile[] = result.files.map((f) => ({
@@ -406,9 +466,74 @@ export class GeneratorAgent extends Agent {
 
     return {
       success: true,
-      result: { fileCount: files.length },
+      result: { fileCount: files.length, memoryMatches: memory ? { files: memory.files.length, decisions: memory.decisions.length } : 0 },
       files,
       metadata: { agent: this.name, duration: 0, modelUsed: context.model },
     };
   }
+
+  /**
+   * Search project memory (file summaries + decisions) for entries relevant to
+   * the prompt, then read the matched files from disk. Returns null when the
+   * MemoryStore is unavailable, no keywords can be extracted, or nothing matches —
+   * in which case the caller falls back to scan-only generation.
+   */
+  private async findMemoryMatches(
+    prompt: string,
+    context: AgentContext,
+  ): Promise<MemoryMatches | null> {
+    try {
+      const store = context.container.get<MemoryStore>("memoryStore");
+      const keywords = extractKeywords(prompt);
+      if (keywords.length === 0) return null;
+
+      const [entries, decisions] = await Promise.all([
+        store.getProjectFiles(context.targetDir),
+        store.getDecisions(context.targetDir),
+      ]);
+
+      const matchedPaths = Object.entries(entries)
+        .filter(([path, summary]) => {
+          const haystack = `${path} ${summary}`.toLowerCase();
+          return keywords.some((keyword) => haystack.includes(keyword));
+        })
+        .map(([path]) => path);
+
+      const matchedDecisions = decisions.filter((d) => {
+        const haystack = `${d.question} ${d.answer}`.toLowerCase();
+        return keywords.some((keyword) => haystack.includes(keyword));
+      });
+
+      if (matchedPaths.length === 0 && matchedDecisions.length === 0) return null;
+
+      const files = await this.readFiles(context, matchedPaths);
+      return { files, decisions: matchedDecisions };
+    } catch {
+      // No MemoryStore registered or the lookup failed — never block generation.
+      return null;
+    }
+  }
+}
+
+// ── memory keyword helpers ────────────────────────────────────────────────
+
+/** Words too common to be useful for matching file summaries. */
+const STOPWORDS = new Set([
+  "about", "above", "after", "again", "against", "already", "also", "another", "anyone",
+  "anything", "around", "before", "being", "below", "between", "change", "could",
+  "create", "doing", "down", "during", "each", "every", "first", "from", "generate",
+  "have", "having", "into", "just", "like", "make", "more", "most", "much", "must",
+  "need", "never", "only", "other", "over", "please", "project", "should", "some",
+  "still", "such", "than", "that", "their", "them", "then", "there", "these", "they",
+  "this", "those", "through", "under", "until", "very", "want", "well", "were",
+  "what", "when", "where", "which", "while", "will", "with", "would", "your",
+  "file", "files", "code", "codes", "user", "users", "using", "used", "work", "works",
+]);
+
+/** Split a prompt into lowercase keywords (>= 4 chars, no stopwords). */
+function extractKeywords(prompt: string): string[] {
+  return prompt
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter((word) => word.length >= 4 && !STOPWORDS.has(word));
 }

@@ -181,6 +181,17 @@ async function testAgentResultPassthrough() {
   console.log("  ✓ result passthrough");
 }
 
+async function testAgentMetadataIncludesTargetDir() {
+  console.log("TEST 7: run() stamps metadata.targetDir from the context...");
+  const targetDir = "/tmp/some-project";
+  const agent = new RecordingAgent();
+  const output = await agent.run({ prompt: "hi" }, makeContext({ targetDir }));
+  if (output.metadata.targetDir !== targetDir) {
+    throw new Error(`expected metadata.targetDir ${targetDir}, got ${output.metadata.targetDir}`);
+  }
+  console.log("  ✓ metadata.targetDir populated");
+}
+
 // ── Run all tests ─────────────────────────────────────────────────────────
 
 async function main() {
@@ -194,6 +205,7 @@ async function main() {
     testAgentErrorEmitsErrorEventAndReturnsFailure,
     testAgentDryRunNeverCallsProvider,
     testAgentResultPassthrough,
+    testAgentMetadataIncludesTargetDir,
   ];
   let passed = 0;
   let failed = 0;

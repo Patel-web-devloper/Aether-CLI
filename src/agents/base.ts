@@ -44,6 +44,12 @@ export interface AgentInput {
   options?: Record<string, unknown>;
 }
 
+/** Project memory attached to the context by MemoryAgent.enrichContext. */
+export interface MemoryContext {
+  files: Array<{ path: string; summary: string }>;
+  decisions: Array<{ question: string; answer: string; timestamp: number }>;
+}
+
 /** Execution context shared by every agent in a run. */
 export interface AgentContext {
   provider: LLMProvider;
@@ -52,6 +58,8 @@ export interface AgentContext {
   eventBus: EventBus;
   container: ServiceContainer;
   dryRun: boolean;
+  /** Project memory injected by MemoryAgent.enrichContext (when available). */
+  memoryContext?: MemoryContext;
 }
 
 /** Output produced by an agent. */
@@ -66,6 +74,8 @@ export interface AgentOutput {
     duration: number;
     tokensUsed?: number;
     modelUsed?: string;
+    /** Project root this agent ran against (used by auto-memory persistence). */
+    targetDir?: string;
   };
 }
 
@@ -118,6 +128,7 @@ export abstract class Agent {
         duration,
         tokensUsed: output.metadata.tokensUsed,
         modelUsed: output.metadata.modelUsed ?? context.model,
+        targetDir: context.targetDir,
       };
 
       if (this.afterExecute) {
@@ -156,7 +167,7 @@ export abstract class Agent {
       return {
         success: false,
         error: error.message,
-        metadata: { agent: this.name, duration, modelUsed: context.model },
+        metadata: { agent: this.name, duration, modelUsed: context.model, targetDir: context.targetDir },
       };
     }
   }
