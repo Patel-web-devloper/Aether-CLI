@@ -144,6 +144,35 @@ async function testMemoryAgentEventsSkipped() {
   console.log("  ✓ memory agent results ignored");
 }
 
+async function testAgentDoneUsesMetadataTargetDir() {
+  console.log("TEST 6: agent:done persists summaries under metadata.targetDir (not cwd)...");
+  const h = makeHarness();
+  const projectDir = join(h.dir, "project");
+  try {
+    h.bus.emit({
+      type: "agent:done",
+      agent: "coder",
+      taskId: "t6",
+      duration: 10,
+      result: {
+        files: [{ path: "src/c.ts", summary: "module c" }],
+        metadata: { agent: "coder", duration: 10, targetDir: projectDir },
+      },
+    });
+    await waitFor(async () => Object.keys(await h.store.getProjectFiles(projectDir)).length === 1);
+
+    const files = await h.store.getProjectFiles(projectDir);
+    assert(files["src/c.ts"] === "module c", `expected summary under targetDir, got ${JSON.stringify(files)}`);
+
+    // Nothing should be recorded under cwd (the old behavior).
+    const cwdFiles = await h.store.getProjectFiles(process.cwd());
+    assert(Object.keys(cwdFiles).length === 0, `expected no summaries under cwd, got ${JSON.stringify(cwdFiles)}`);
+  } finally {
+    rmSync(h.dir, { recursive: true, force: true });
+  }
+  console.log("  ✓ summaries stored under metadata.targetDir");
+}
+
 // ── Run all tests ─────────────────────────────────────────────────────────
 
 async function main() {
@@ -156,6 +185,7 @@ async function main() {
     testTaskCompletedPersistsEntry,
     testTaskCompletedStringifiesObjectResult,
     testMemoryAgentEventsSkipped,
+    testAgentDoneUsesMetadataTargetDir,
   ];
   let passed = 0;
   let failed = 0;
