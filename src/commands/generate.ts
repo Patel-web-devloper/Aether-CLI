@@ -12,6 +12,7 @@ import {
   type GeneratorOptions,
 } from "../agents/generator.js";
 import { writeFiles, formatResults, type WriteOptions } from "../utils/writer.js";
+import { MemoryStore } from "../memory/store.js";
 import { resolve } from "node:path";
 
 export interface GenerateCommandOptions {
@@ -68,6 +69,8 @@ export async function runGenerate(
       model,
       mode: options.mode,
       targetDir,
+      // Default store — persisted project memory (no-op when empty).
+      memoryStore: new MemoryStore(),
     };
     genResult = await generateFromPrompt(options.prompt, genOpts);
   } catch (err: unknown) {
@@ -94,6 +97,28 @@ export async function runGenerate(
 
   // ── 4. Print summary ──────────────────────────────────────────────────
   console.log(formatResults(results));
+
+  // ── 4b. Edit mode: applied patches + impact analysis ──────────────────
+  if (genResult.patches && genResult.patches.length > 0) {
+    for (const patch of genResult.patches) {
+      const first = patch.hunks[0]?.startLine;
+      const last = patch.hunks[patch.hunks.length - 1]?.endLine;
+      if (first !== undefined && last !== undefined) {
+        console.log(chalk.green(`  ✓ Applied patch to ${patch.path} (lines ${first}-${last})`));
+      } else {
+        console.log(chalk.green(`  ✓ Applied patch to ${patch.path}`));
+      }
+    }
+    const affected = genResult.impact?.affectedFiles ?? [];
+    if (affected.length > 0) {
+      console.log(chalk.cyan(`  Impact: ${affected.join(", ")}`));
+    } else if (genResult.impact) {
+      console.log(chalk.dim("  Impact: none detected"));
+    }
+  }
+  for (const warning of genResult.warnings ?? []) {
+    console.log(chalk.yellow(`  ⚠ ${warning}`));
+  }
 
   // ── 5. If dry-run, also print diffs ────────────────────────────────────
   if (options.dryRun) {
