@@ -32,6 +32,9 @@ import type { GeneratorMode } from "./agents/generator.js";
 import { MemoryStore } from "./memory/store.js";
 import { MemoryAgent } from "./agents/memory.js";
 import { setupAutoMemory } from "./memory/auto-memory.js";
+import { CodeIndexer } from "./intelligence/indexer.js";
+import { setupAutoIndex } from "./intelligence/auto-index.js";
+import { buildIntelligenceCommand } from "./commands/intelligence.js";
 
 // Core services — v0.2 foundation
 import { eventBus } from "./core/events.js";
@@ -86,6 +89,11 @@ const memoryStore = new MemoryStore();
 container.register("memoryStore", memoryStore);
 container.register("memoryAgent", new MemoryAgent());
 setupAutoMemory(eventBus, memoryStore, container);
+
+// ── Code intelligence (Phase E) ───────────────────────────────────────
+const codeIndexer = new CodeIndexer();
+container.register("codeIndexer", codeIndexer);
+setupAutoIndex(eventBus, codeIndexer, container);
 
 // ── Multi-agent orchestrator (v0.3) ───────────────────────────────────
 // Dedicated scheduler: workflow step tasks must not retry LLM calls.
@@ -877,6 +885,9 @@ memoryCommand.command("index").description("Index project files").option("-t, --
 memoryCommand.command("status").description("Show memory statistics").option("-t, --target <dir>", "Project root", process.cwd()).action(async (options: { target: string }) => { const files = await memoryStore.getProjectFiles(options.target); const decisions = await memoryStore.getDecisions(options.target); const tasks = await memoryStore.getTaskHistory(options.target); console.log(`Files indexed: ${Object.keys(files).length}\nDecisions: ${decisions.length}\nTasks: ${tasks.length}`); });
 memoryCommand.command("recall").description("Search project memory").argument("<query>").option("-t, --target <dir>", "Project root", process.cwd()).action(async (query: string, options: { target: string }) => { const agent = container.get<MemoryAgent>("memoryAgent"); const provider = providerRegistry.get(getConfig().provider || "openai"); const result = await agent.run({ prompt: query, options: { mode: "recall", query } }, { provider, targetDir: options.target, eventBus, container, dryRun: true }); console.log(JSON.stringify(result.result, null, 2)); });
 memoryCommand.command("forget").description("Clear project memory").option("-t, --target <dir>", "Project root", process.cwd()).action(async (options: { target: string }) => { await memoryStore.clearProject(options.target); console.log("Project memory cleared."); });
+
+// ── code intelligence (Phase E) ──────────────────────────────────────
+program.addCommand(buildIntelligenceCommand(container));
 
 // ── Parse ───────────────────────────────────────────────────────────
 // If no command is given, show help.

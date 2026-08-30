@@ -21,6 +21,7 @@ import { join } from "node:path";
 import { EventBus } from "../../core/events.js";
 import { ServiceContainer } from "../../core/container.js";
 import { MemoryStore } from "../../memory/store.js";
+import { CodeIndexer } from "../../intelligence/indexer.js";
 import {
   GeneratorAgent,
   parseResponse,
@@ -299,6 +300,49 @@ async function testGenerateFromPromptAppliesPatch() {
   console.log("  ✓ patch applied to disk content, impact reported");
 }
 
+async function testImpactAnalysisUsesCodeIndexer() {
+  console.log("TEST 12: analyzeImpact uses CodeIndexer for accurate impact analysis...");
+  const dir = mkdtempSync(join(tmpdir(), "aether-impact-index-"));
+  const cache = join(tmpdir(), `aether-impact-index-cache-${Date.now()}`);
+  try {
+    mkdirSync(join(dir, "src", "utils"), { recursive: true });
+    mkdirSync(join(dir, "src", "ui"), { recursive: true });
+    writeFileSync(
+      join(dir, "src", "utils", "format.ts"),
+      'export function formatName(name: string): string {\n  return name.toUpperCase();\n}\n',
+    );
+    writeFileSync(
+      join(dir, "src", "ui", "display.ts"),
+      'import { formatName } from "../utils/format";\nexport function render(x: string): string {\n  return formatName(x);\n}\n',
+    );
+    writeFileSync(
+      join(dir, "src", "ui", "total.ts"),
+      'import { sumAll } from "../utils/math";\nexport function total(xs: number[]): number {\n  return sumAll(xs);\n}\n',
+    );
+
+    const indexer = new CodeIndexer(cache);
+    await indexer.indexProject(dir); // build the code-intelligence index
+
+    const patches: FilePatch[] = [
+      {
+        path: "src/utils/format.ts",
+        hunks: [hunk({ startLine: 1, endLine: 1, removed: ["export function formatName(name: string): string {"], added: ["export function formatName(name: string, lang: string): string {"] })],
+      },
+    ];
+
+    // No MemoryStore passed — this must resolve purely from code intelligence.
+    const impact = await analyzeImpact(patches, dir, undefined, indexer);
+    assert(impact.affectedFiles.includes("src/ui/display.ts"), "display.ts should be flagged via real import/usage of formatName");
+    assert(!impact.affectedFiles.includes("src/ui/total.ts"), "total.ts does not reference format.ts and must NOT be flagged");
+    assert(!impact.affectedFiles.includes("src/utils/format.ts"), "the changed file itself must not be flagged");
+    assert(impact.rationale.toLowerCase().includes("code intelligence"), "rationale should mention code intelligence");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+    rmSync(cache, { recursive: true, force: true });
+  }
+  console.log("  ✓ accurate impact from incoming references (no guessing)");
+}
+
 async function testEditModeFallsBackToFullContent() {
   console.log("TEST 11: edit mode falls back to full-content ### EDIT: when no hunks present...");
   const dir = mkdtempSync(join(tmpdir(), "aether-edit-fallback-"));
@@ -345,6 +389,7 @@ async function main() {
     testImpactAnalysisReturnsAffectedFiles,
     testGenerateFromPromptAppliesPatch,
     testEditModeFallsBackToFullContent,
+    testImpactAnalysisUsesCodeIndexer,
   ];
   let passed = 0;
   let failed = 0;

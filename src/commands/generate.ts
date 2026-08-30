@@ -13,6 +13,7 @@ import {
 } from "../agents/generator.js";
 import { writeFiles, formatResults, type WriteOptions } from "../utils/writer.js";
 import { MemoryStore } from "../memory/store.js";
+import { CodeIndexer } from "../intelligence/indexer.js";
 import { resolve } from "node:path";
 
 export interface GenerateCommandOptions {
@@ -71,6 +72,8 @@ export async function runGenerate(
       targetDir,
       // Default store — persisted project memory (no-op when empty).
       memoryStore: new MemoryStore(),
+      // Code intelligence — accurate impact analysis when the project is indexed.
+      codeIndexer: new CodeIndexer(),
     };
     genResult = await generateFromPrompt(options.prompt, genOpts);
   } catch (err: unknown) {

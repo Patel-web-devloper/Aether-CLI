@@ -50,6 +50,14 @@ export interface MemoryContext {
   decisions: Array<{ question: string; answer: string; timestamp: number }>;
 }
 
+/** Code intelligence attached to the context by MemoryAgent.enrichContext. */
+export interface IntelligenceContext {
+  /** Structured text map of the project (file tree + symbols per file). */
+  repoMap?: string;
+  /** Total number of indexed symbols across the project. */
+  symbolCount?: number;
+}
+
 /** Execution context shared by every agent in a run. */
 export interface AgentContext {
   provider: LLMProvider;
@@ -60,6 +68,8 @@ export interface AgentContext {
   dryRun: boolean;
   /** Project memory injected by MemoryAgent.enrichContext (when available). */
   memoryContext?: MemoryContext;
+  /** Code intelligence injected by MemoryAgent.enrichContext (when available). */
+  intelligence?: IntelligenceContext;
 }
 
 /** Output produced by an agent. */
