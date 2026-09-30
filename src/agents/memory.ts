@@ -1,5 +1,7 @@
 import { Agent, type AgentInput, type AgentContext, type AgentOutput } from "./base.js";
 import { MemoryStore } from "../memory/store.js";
+import { CodeIndexer } from "../intelligence/indexer.js";
+import { generateRepoMap } from "../intelligence/repo-map.js";
 import { scanDirectory } from "../utils/scanner.js";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
@@ -18,17 +20,39 @@ export class MemoryAgent extends Agent {
         store.getProjectFiles(context.targetDir),
         store.getDecisions(context.targetDir),
       ]);
+      const intelligence = await this.buildIntelligence(context);
       return {
         ...context,
         memoryContext: {
           files: Object.entries(files).map(([path, summary]) => ({ path, summary })),
           decisions,
         },
+        ...(intelligence ? { intelligence } : {}),
       };
     } catch {
       // No MemoryStore registered (or store read failed) — leave context untouched.
       return context;
     }
+  }
+
+  /**
+   * Build code-intelligence context (repo map + symbol stats) from the
+   * registered CodeIndexer. Returns null when there's no index for the project
+   * yet — keeps agent context untouched until `aether intelligence index` runs.
+   */
+  private async buildIntelligence(context: AgentContext) {
+    let indexer: CodeIndexer;
+    try {
+      indexer = context.container.get<CodeIndexer>("codeIndexer");
+    } catch {
+      return undefined; // no codeIndexer registered
+    }
+    if (!indexer.hasIndex(context.targetDir)) return undefined; // not indexed yet
+    const index = await indexer.getIndex(context.targetDir);
+    return {
+      repoMap: generateRepoMap(index, context.targetDir),
+      symbolCount: index.symbols.length,
+    };
   }
   async execute(input: AgentInput, context: AgentContext): Promise<AgentOutput> {
     const mode = String(input.options?.mode ?? "index");

@@ -12,6 +12,7 @@ import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { basename, resolve } from "node:path";
 import type { MemoryStore } from "../memory/store.js";
+import type { CodeIndexer } from "../intelligence/indexer.js";
 import type { ContextManager, ContextPayload } from "../context/manager.js";
 import {
   Agent,
@@ -93,6 +94,10 @@ export interface GeneratorOptions {
   memoryDecisions?: Array<{ question: string; answer: string }>;
   /** MemoryStore used for impact analysis after applying edits. */
   memoryStore?: MemoryStore;
+  /** Code indexer for accurate (AST-ish) impact analysis. When it has an index
+   * for the target project, impact analysis uses real incoming references
+   * instead of guessing from memory summaries. */
+  codeIndexer?: CodeIndexer;
 }
 
 /** Memory matches found by GeneratorAgent before generation. */
@@ -212,7 +217,7 @@ export async function generateFromPrompt(
       warnings.push(...applied.warnings);
       if (applied.files.length > 0) {
         files = applied.files;
-        impact = await analyzeImpact(patches, options.targetDir, options.memoryStore);
+        impact = await analyzeImpact(patches, options.targetDir, options.memoryStore, options.codeIndexer);
       } else {
         // All hunks failed to apply — fall back to full-content parsing.
         patches = undefined;
@@ -683,8 +688,30 @@ export async function analyzeImpact(
   patches: FilePatch[],
   targetDir: string,
   store?: MemoryStore,
+  indexer?: CodeIndexer,
 ): Promise<ImpactAnalysis> {
   const changedFiles = patches.map((p) => p.path);
+
+  // ── Accurate path: code intelligence (real incoming references) ──────
+  if (indexer && indexer.hasIndex(targetDir)) {
+    const flagged = new Map<string, Set<string>>();
+    for (const patch of patches) {
+      for (const ref of indexer.getIncomingRefs(patch.path)) {
+        if (changedFiles.includes(ref.fromFile)) continue;
+        const set = flagged.get(ref.fromFile) ?? new Set<string>();
+        set.add(`references ${ref.toSymbol}`);
+        flagged.set(ref.fromFile, set);
+      }
+    }
+    const affectedFiles = [...flagged.keys()];
+    const rationale =
+      affectedFiles.length === 0
+        ? "no other files reference the changed file(s) (code intelligence)"
+        : `${affectedFiles.length} file(s) reference the changed file(s) via code intelligence (${[...new Set([...flagged.values()].flat())].join(", ")})`;
+    return { changedFiles, affectedFiles, rationale };
+  }
+
+  // ── Fallback: MemoryStore summaries (best effort when not indexed) ────
   if (!store) {
     return {
       changedFiles,
@@ -802,6 +829,7 @@ export class GeneratorAgent extends Agent {
     // so edits target real code instead of guessing from a scan tree alone.
     const memory = await this.findMemoryMatches(input.prompt, context);
     const memoryStore = this.getMemoryStore(context);
+    const codeIndexer = this.getCodeIndexer(context);
     const result = await generateFromPrompt(input.prompt, {
       provider: context.provider,
       model: context.model,
@@ -811,6 +839,7 @@ export class GeneratorAgent extends Agent {
       memoryFiles: memory?.files,
       memoryDecisions: memory?.decisions,
       memoryStore,
+      codeIndexer,
     });
 
     const files: GeneratedFile[] = result.files.map((f) => ({
@@ -838,6 +867,15 @@ export class GeneratorAgent extends Agent {
   private getMemoryStore(context: AgentContext): MemoryStore | undefined {
     try {
       return context.container.get<MemoryStore>("memoryStore");
+    } catch {
+      return undefined;
+    }
+  }
+
+  /** Fetch the registered CodeIndexer (for accurate impact analysis), if any. */
+  private getCodeIndexer(context: AgentContext): CodeIndexer | undefined {
+    try {
+      return context.container.get<CodeIndexer>("codeIndexer");
     } catch {
       return undefined;
     }
